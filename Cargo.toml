@@ -1,0 +1,8 @@
+[package]
+name = "bitflip"
+version = "0.1.0"
+authors = ["Kārlis Seņko <karlis3p70l1ij@gmail.com>"]
+
+[dependencies]
+clap = "2.29.0"
+termion = "1.5.1"
