@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::fs;
 use std::io::{Error, ErrorKind};
 use std::path::{Path, PathBuf};
+use std::str;
 
 pub struct Encoding {
     pub byte_to_char: [char; 256],
@@ -77,6 +78,28 @@ impl Encoding {
 
         Ok(result)
     }
+
+    pub fn decode_utf8<'a>(
+        &self,
+        mut input: str::Chars<'a>,
+        out: &mut [u8],
+    ) -> Result<(usize, &'a str), std::io::Error> {
+        let mut produced = 0 as usize;
+        let n = out.len();
+        while produced < n {
+            if let Some(c) = input.next() {
+                if let Some(byte) = self.char_to_byte.get(&c) {
+                    out[produced] = *byte;
+                    produced += 1;
+                } else {
+                    return Err(Error::from(ErrorKind::InvalidData));
+                }
+            } else {
+                return Ok((produced, ""));
+            }
+        }
+        Ok((produced, input.as_str()))
+    }
 }
 
 #[cfg(test)]
@@ -116,5 +139,27 @@ mod tests {
 
         //nonexisting
         assert_eq!(encoding.char_to_byte.get(&'\n'), None);
+    }
+
+    #[test]
+    fn from_utf8() {
+        let encoding = Encoding::get_encoding("437").unwrap();
+
+        let mut buf = [0u8; 256];
+        let txt = "abcdefABCDEF123456";
+        let (len, tail) = encoding.decode_utf8(txt.chars(), &mut buf).unwrap();
+        assert_eq!(len, txt.len());
+        assert_eq!(&buf[..len], b"abcdefABCDEF123456");
+        assert_eq!(tail, "");
+
+        let mut buf = [0u8; 5];
+        let txt = "123456";
+        assert_eq!(
+            encoding.decode_utf8(txt.chars(), &mut buf).unwrap(),
+            (5, "6")
+        );
+        assert_eq!(&buf, b"12345");
+
+        assert!(encoding.decode_utf8("āēūž".chars(), &mut buf).is_err());
     }
 }

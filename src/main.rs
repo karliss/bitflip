@@ -3,6 +3,7 @@ extern crate clap;
 
 use clap::{App, Arg};
 
+mod bytegrid;
 mod encoding;
 
 fn main() {
