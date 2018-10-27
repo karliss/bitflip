@@ -18,21 +18,7 @@ impl Encoding {
     }
 
     fn get_encoding_dir() -> Result<PathBuf, std::io::Error> {
-        let current_exe = ::std::env::current_exe()?;
-        let current_dir = current_exe.parent().unwrap();
-        let test_path = current_dir.join("../../resource/encodings");
-        if test_path.exists() {
-            return Ok(test_path);
-        }
-        let test_path = current_dir.join("../../../resource/encodings");
-        if test_path.exists() {
-            return Ok(test_path);
-        }
-        let test_path = current_dir.join("resource/encodings");
-        if test_path.exists() {
-            return Ok(test_path);
-        }
-        Err(Error::new(ErrorKind::NotFound, "Resource dir not found"))
+        Ok(::resource::get_resource_dir()?.join("encodings"))
     }
 
     pub fn get_encoding(name: &str) -> Result<Encoding, std::io::Error> {

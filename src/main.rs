@@ -1,10 +1,13 @@
 #[macro_use]
 extern crate clap;
 
+extern crate termion;
+
 use clap::{App, Arg};
 
 mod bytegrid;
 mod encoding;
+mod resource;
 
 fn main() {
     let matches = App::new("ethdec")
