@@ -1,24 +1,25 @@
 use std::fs::File;
 use std::io::prelude::*;
-use std::io::{BufReader};
+use std::io::BufReader;
 use std::io::{Error, ErrorKind};
 use std::ops::{Index, IndexMut};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use encoding::Encoding;
 
 const N: usize = 256;
 
 #[derive(Clone)]
-struct ByteGrid {
+pub struct ByteGrid {
     data: Box<[[u8; N]; N]>,
 }
 
 impl PartialEq for ByteGrid {
     fn eq(&self, other: &ByteGrid) -> bool {
-        self.data.iter().zip(other.data.iter())
-            .all(|(a,b)|
-                a.iter().eq(b.iter()))
+        self.data
+            .iter()
+            .zip(other.data.iter())
+            .all(|(a, b)| a.iter().eq(b.iter()))
     }
 }
 impl Eq for ByteGrid {}
@@ -39,7 +40,7 @@ impl ByteGrid {
             let line = line?;
             let line = line.trim_end_matches('\r');
             let (_, tail) = encoding.decode_utf8(line.chars(), &mut result.data[i])?;
-            if tail.is_empty() {
+            if !tail.is_empty() {
                 eprintln!("Warning: trailing chars on line {}", i + 1);
             }
         }
@@ -47,11 +48,38 @@ impl ByteGrid {
         Ok(result)
     }
 
+    pub fn save(&self, out: &mut ::std::io::Write, encoding: &Encoding) -> Result<(), Error> {
+        let mut buf = [0u8; 4 * N + 8];
+        for line in self.data.iter() {
+            let mut offset = 0 as usize;
+            for byte in line.iter() {
+                let c = encoding.byte_to_char[*byte as usize];
+                let utf8_char = c.encode_utf8(&mut buf[offset..]);
+                offset += utf8_char.len();
+            }
+            {
+                let e = '\n'.encode_utf8(&mut buf[offset..]);
+                offset += e.len();
+            }
+            match out.write(&buf[..offset]) {
+                Ok(size) => {
+                    if size != offset {
+                        return Err(Error::new(ErrorKind::Interrupted, "Write interrupter?"));
+                    }
+                }
+                Err(err) => {
+                    return Err(err);
+                }
+            }
+        }
+        Ok(())
+    }
+
     pub fn diff(&self, after: &ByteGrid) -> ByteGridDiff {
         let mut result = ByteGridDiff::new();
-        for i in 0u16 ..= ::std::u16::MAX {
+        for i in 0u16..=::std::u16::MAX {
             if self[i] != after[i] {
-                let mut add_new_hunk= true;
+                let mut add_new_hunk = true;
                 if let Some(last_hunk) = result.hunks.last_mut() {
                     match last_hunk {
                         DiffHunk::Seq(pos, data) => {
@@ -87,24 +115,58 @@ impl ByteGrid {
     }
 }
 
-
 enum DiffHunk {
-    Seq(u16, Vec<u8>)
+    Seq(u16, Vec<u8>),
 }
 
-struct ByteGridDiff {
-    hunks: Vec<DiffHunk>
+pub struct ByteGridDiff {
+    hunks: Vec<DiffHunk>,
 }
 
 impl ByteGridDiff {
     fn new() -> ByteGridDiff {
-        ByteGridDiff {
-            hunks: Vec::new()
-        }
+        ByteGridDiff { hunks: Vec::new() }
     }
 
-    //TODO: serialize
-    //TODO: unserialize
+    pub fn serialize(&self) -> Vec<u8> {
+        let mut result = Vec::new();
+        for hunk in &self.hunks {
+            match hunk {
+                DiffHunk::Seq(pos, data) => {
+                    let mut current_pos = *pos as usize;
+                    for fragment in data.chunks(256) {
+                        result.push(current_pos as u8);
+                        result.push((current_pos >> 8) as u8);
+                        result.push((fragment.len() - 1) as u8);
+                        result.extend_from_slice(fragment);
+                        current_pos += fragment.len();
+                    }
+                }
+            }
+        }
+        result
+    }
+
+    pub fn deserialize(data: &Vec<u8>) -> Result<ByteGridDiff, ()> {
+        let mut result = ByteGridDiff::new();
+        let mut pos = 0 as usize;
+        while data.len() - pos >= 4 {
+            let grid_pos = data[pos] as u16 + ((data[pos + 1] as u16) << 8);
+            let len = (data[pos + 2] as usize) + 1;
+            pos += 3;
+            if let Some(hunk_data) = data.get(pos..pos + len) {
+                result.hunks.push(DiffHunk::Seq(grid_pos, hunk_data.into()));
+            } else {
+                return Err(());
+            }
+            pos += len;
+        }
+        if data.len() - pos > 0 {
+            Err(())
+        } else {
+            Ok(result)
+        }
+    }
 }
 
 impl Index<(u8, u8)> for ByteGrid {
@@ -147,7 +209,7 @@ mod tests {
         let mut ans = Vec::new();
 
         //everything differs
-        let mut a = ByteGrid::new();
+        let a = ByteGrid::new();
         let mut b = ByteGrid::new();
         for i in 0u16..=std::u16::MAX {
             b[i] = i as u8;
@@ -160,7 +222,6 @@ mod tests {
         a[200u16] = 3;
         ans.push((b, a));
 
-
         ans
     }
 
@@ -168,7 +229,7 @@ mod tests {
     fn empty_patch() {
         let mut before = ByteGrid::new();
         for i in 0u16..=std::u16::MAX {
-            before[i] = (i ^ (i>>8)) as u8;
+            before[i] = (i ^ (i >> 8)) as u8;
         }
         let diff = before.diff(&before);
         assert!(diff.hunks.is_empty());
@@ -186,6 +247,18 @@ mod tests {
             c.patch(&patch);
             assert!(c == b);
         }
+    }
 
+    #[test]
+    fn diff_serialize() {
+        let test_data = get_test_data();
+        for (a, b) in test_data {
+            let patch = a.diff(&b);
+            let serialized: Vec<u8> = patch.serialize();
+            let deseriaized = ByteGridDiff::deserialize(&serialized).unwrap();
+            let mut c = a.clone();
+            c.patch(&deseriaized);
+            assert!(c == b);
+        }
     }
 }

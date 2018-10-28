@@ -1,5 +1,5 @@
 use std::io::{Error, ErrorKind};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 pub fn get_resource_dir() -> Result<PathBuf, std::io::Error> {
     let current_exe = ::std::env::current_exe()?;
@@ -19,6 +19,7 @@ pub fn get_resource_dir() -> Result<PathBuf, std::io::Error> {
     Err(Error::new(ErrorKind::NotFound, "Resource dir not found"))
 }
 
+#[cfg(test)]
 pub fn get_test_data_dir() -> Result<PathBuf, std::io::Error> {
     let current_exe = ::std::env::current_exe()?;
     let current_dir = current_exe.parent().unwrap();

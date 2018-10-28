@@ -23,13 +23,13 @@ impl Encoding {
 
     pub fn get_encoding(name: &str) -> Result<Encoding, std::io::Error> {
         let encoding_dir = Encoding::get_encoding_dir()?;
-        eprintln!("!!! {:?}", encoding_dir);
         Encoding::load(&encoding_dir.join(name))
     }
 
     pub fn load(path: &Path) -> Result<Encoding, std::io::Error> {
         let mut result = Encoding::new();
         let buf = fs::read_to_string(&path)?;
+
         let mut i = 0;
         let mut done = false;
         for c in buf.chars() {
