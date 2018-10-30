@@ -11,10 +11,12 @@ use termion::{color, style};
 
 use bytegrid::{ByteGrid, ByteGridDiff};
 use encoding::Encoding;
+use ui::*;
 
 mod bytegrid;
 mod encoding;
 mod resource;
+mod ui;
 
 fn run_diff(args: &ArgMatches) -> Result<(), ()> {
     let before_name = args.value_of("before").unwrap();
@@ -69,15 +71,40 @@ fn run_patch(args: &ArgMatches) -> Result<(), ()> {
         })?;
     bytes_before.patch(&patch);
     let write_result = if let Some(output_path) = output {
-        File::create(Path::new(&output_path))
-            .and_then(|mut f| bytes_before.save(&mut f, &encoding))
+        File::create(Path::new(&output_path)).and_then(|mut f| bytes_before.save(&mut f, &encoding))
     } else {
         bytes_before.save(&mut std::io::stdout(), &encoding)
     };
     write_result.map_err(|e| {
         eprintln!("Write error: {}", e);
-        return ()
+        return ();
     })?;
+    Ok(())
+}
+
+fn run_game(args: &ArgMatches) -> Result<(), ()> {
+    let mut stdout = std::io::stdout();
+    {
+        let mut menu = Menu::new(
+            vec![
+                "aa1".to_owned(),
+                "aaa2".to_owned(),
+                "aaa3".to_owned(),
+                "aaa4".to_owned(),
+            ],
+            true,
+        );
+        let mut context = UiContext::create(&stdout).ok_or(())?;
+        context.run(&mut menu);
+    }
+
+    write!(
+        stdout,
+        "{}{}",
+        ::termion::style::Reset,
+        ::termion::cursor::Show
+    )
+    .map_err(|_| ())?;
     Ok(())
 }
 
@@ -106,7 +133,7 @@ fn main() {
     let result = match matches.subcommand() {
         ("diff", Some(m)) => run_diff(m),
         ("patch", Some(m)) => run_patch(m),
-        _ => Err(()),
+        _ => run_game(&matches),
     };
     ::std::process::exit(match result {
         Ok(_) => 0,
