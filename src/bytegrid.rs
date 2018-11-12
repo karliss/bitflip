@@ -6,6 +6,7 @@ use std::ops::{Index, IndexMut};
 use std::path::Path;
 
 use encoding::Encoding;
+use vecmath::V2;
 
 const N: usize = 256;
 
@@ -173,31 +174,43 @@ impl Index<(u8, u8)> for ByteGrid {
     type Output = u8;
 
     fn index(&self, idx: (u8, u8)) -> &u8 {
-        &self.data[idx.0 as usize][idx.1 as usize]
+        &self.data[idx.1 as usize][idx.0 as usize]
     }
 }
 
 impl IndexMut<(u8, u8)> for ByteGrid {
     fn index_mut(&mut self, idx: (u8, u8)) -> &mut u8 {
-        &mut self.data[idx.0 as usize][idx.1 as usize]
+        &mut self.data[idx.1 as usize][idx.0 as usize]
     }
 }
 
 impl Index<u16> for ByteGrid {
     type Output = u8;
-
     fn index(&self, idx: u16) -> &u8 {
-        let high = (idx >> 8) as u8;
-        let low = (idx & 0xff) as u8;
-        &self[(high, low)]
+        let x = (idx >> 8) as u8;
+        let y = (idx & 0xff) as u8;
+        &self[(x, y)]
     }
 }
 
 impl IndexMut<u16> for ByteGrid {
     fn index_mut(&mut self, idx: u16) -> &mut u8 {
-        let high = (idx >> 8) as u8;
-        let low = (idx & 0xff) as u8;
-        &mut self[(high, low)]
+        let x = (idx >> 8) as u8;
+        let y = (idx & 0xff) as u8;
+        &mut self[(x, y)]
+    }
+}
+
+impl Index<V2> for ByteGrid {
+    type Output = u8;
+    fn index(&self, idx: V2) -> &u8 {
+        &self[(idx.x as u8, idx.y as u8)]
+    }
+}
+
+impl IndexMut<V2> for ByteGrid {
+    fn index_mut(&mut self, idx: V2) -> &mut u8 {
+        &mut self[(idx.x as u8, idx.y as u8)]
     }
 }
 

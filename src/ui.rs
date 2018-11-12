@@ -1,3 +1,4 @@
+use std::any::Any;
 use std::io::{stdin, stdout, Stdout};
 use std::io::{Read, Write};
 use std::thread;
@@ -5,7 +6,9 @@ use std::time::Duration;
 use termion::event::{Event, Key};
 use termion::input::TermRead;
 use termion::raw::IntoRawMode;
+use termion::screen::*;
 use termion::{async_stdin, AsyncReader};
+use vecmath::*;
 
 pub struct Menu {
     entries: Vec<String>,
@@ -33,7 +36,7 @@ impl Menu {
     }
 }
 
-impl UiWidget<(), Option<usize>> for Menu {
+impl UiWidget for Menu {
     fn print(&self, ui: &mut UiContext) -> ::std::io::Result<()> {
         write!(
             ui.raw_out,
@@ -90,23 +93,24 @@ impl UiWidget<(), Option<usize>> for Menu {
                 }
             }
             _ => {
-                eprintln!("{:?}", e);
                 false
             }
         }
     }
 
-    fn result(&self) -> Option<Option<usize>> {
-        self.result
+    fn result(&self) -> Option<Box<dyn Any>> {
+        self.result.map(|v| Box::new(v) as Box<Any>)
     }
 
-    fn run(&mut self, ui: &mut UiContext) -> Option<Option<usize>> {
+    fn run(&mut self, ui: &mut UiContext) -> Option<Box<Any>> {
         None
     }
+
+    fn resize(&mut self, _: Rectangle, _: V2) {}
 }
 
 pub struct UiContext<'a> {
-    raw_out: ::termion::raw::RawTerminal<::std::io::StdoutLock<'a>>,
+    raw_out: AlternateScreen<::termion::raw::RawTerminal<::std::io::StdoutLock<'a>>>,
     async_in: AsyncReader,
 }
 
@@ -114,7 +118,7 @@ impl<'a> UiContext<'a> {
     pub fn create(out: &'a Stdout) -> Option<UiContext<'a>> {
         if let Ok(a) = out.lock().into_raw_mode() {
             Some(UiContext {
-                raw_out: a,
+                raw_out: AlternateScreen::from(a),
                 async_in: async_stdin(),
             })
         } else {
@@ -122,12 +126,12 @@ impl<'a> UiContext<'a> {
         }
     }
 
-    pub fn run<IN, OUT>(&mut self, widget: &mut UiWidget<IN, OUT>) -> Option<OUT> {
+    pub fn run(&mut self, widget: &mut UiWidget) -> Option<Box<Any>> {
         widget.print(self);
         while widget.result().is_none() {
-            let mut hasInput = false;
+            let mut has_input = false;
             let mut retry = 5;
-            while !hasInput && retry > 0 {
+            while !has_input && retry > 0 {
                 while let Some(t) = (&mut self.async_in).events().next() {
                     match t {
                         Ok(Event::Key(Key::Ctrl('c'))) => {
@@ -136,9 +140,9 @@ impl<'a> UiContext<'a> {
                         _ => {}
                     }
                     widget.input(&t.unwrap());
-                    hasInput = true;
+                    has_input = true;
                 }
-                if !hasInput {
+                if !has_input {
                     thread::sleep(Duration::from_millis(10));
                 }
                 retry -= 1;
@@ -149,11 +153,91 @@ impl<'a> UiContext<'a> {
     }
 }
 
-pub trait UiWidget<Input, Output> {
-    fn print(&self, &mut UiContext) -> std::io::Result<()>;
+pub trait UiWidget {
+    fn print(&self, ui: &mut UiContext) -> std::io::Result<()>;
     fn input(&mut self, e: &Event) -> bool {
         return false;
     }
-    fn run(&mut self, ui: &mut UiContext) -> Option<Output>;
-    fn result(&self) -> Option<Output>;
+    //fn childWidgets(&mut self) -> Vec<&UiWidget> { Vec::new() }
+    fn resize(&mut self, widget_size: Rectangle, window: V2);
+    fn run(&mut self, ui: &mut UiContext) -> Option<Box<Any>>;
+    fn result(&self) -> Option<Box<Any>>;
+}
+
+enum GameState {
+    MainMenu,
+    Gameplay,
+}
+pub struct GameUi {
+    state: GameState,
+    main_menu: Menu,
+    result: Option<Result<(), ()>>,
+}
+
+impl GameUi {
+    pub fn new() -> GameUi {
+        GameUi {
+            state: GameState::MainMenu,
+            main_menu: {
+                let result = Menu::new(vec!["New game".to_owned(), "Exit".to_owned()], false);
+                result
+            },
+            result: None,
+        }
+    }
+
+    fn current_widget_mut(&mut self) -> &mut UiWidget {
+        match self.state {
+            GameState::MainMenu => &mut self.main_menu,
+            GameState::Gameplay => {
+                unimplemented!();
+            }
+        }
+    }
+    fn current_widget(&self) -> &UiWidget {
+        match self.state {
+            GameState::MainMenu => &self.main_menu,
+            GameState::Gameplay => {
+                unimplemented!();
+            }
+        }
+    }
+}
+
+impl UiWidget for GameUi {
+    fn print(&self, ui: &mut UiContext) -> std::io::Result<()> {
+        self.current_widget().print(ui)
+    }
+
+    fn input(&mut self, e: &Event) -> bool {
+        let result = self.current_widget_mut().input(e);
+        match self.state {
+            GameState::MainMenu => {
+                if let Some(st) = self.main_menu.result() {
+                    if let Ok(v) = st.downcast::<Option<usize>>() {
+                        match v {
+                            box Some(1) => {
+                                self.result = Some(Result::Ok(()));
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+            }
+            GameState::Gameplay => {}
+        }
+        result
+    }
+
+    fn resize(&mut self, widget_size: Rectangle, window: V2) {
+        self.main_menu.resize(widget_size, window)
+    }
+
+    fn run(&mut self, ui: &mut UiContext) -> Option<Box<Any>> {
+        unimplemented!()
+    }
+
+    fn result(&self) -> Option<Box<Any>> {
+        self.result.map(|v| Box::new(v) as Box<Any>)
+    }
 }

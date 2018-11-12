@@ -1,3 +1,5 @@
+#![feature(box_syntax, box_patterns)]
+#![feature(nll)]
 #[macro_use]
 extern crate clap;
 
@@ -15,8 +17,10 @@ use ui::*;
 
 mod bytegrid;
 mod encoding;
+mod gameplay;
 mod resource;
 mod ui;
+mod vecmath;
 
 fn run_diff(args: &ArgMatches) -> Result<(), ()> {
     let before_name = args.value_of("before").unwrap();
@@ -85,15 +89,7 @@ fn run_patch(args: &ArgMatches) -> Result<(), ()> {
 fn run_game(args: &ArgMatches) -> Result<(), ()> {
     let mut stdout = std::io::stdout();
     {
-        let mut menu = Menu::new(
-            vec![
-                "aa1".to_owned(),
-                "aaa2".to_owned(),
-                "aaa3".to_owned(),
-                "aaa4".to_owned(),
-            ],
-            true,
-        );
+        let mut menu = GameUi::new();
         let mut context = UiContext::create(&stdout).ok_or(())?;
         context.run(&mut menu);
     }
