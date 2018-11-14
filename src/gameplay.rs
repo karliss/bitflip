@@ -7,7 +7,8 @@ const GRID_MAX: u8 = 0xff;
 const PLAYER_VAL: u8 = b'@';
 const DEFAULT_PAGE: u8 = 42;
 
-enum PlayerPos {
+#[derive(Debug, PartialEq, Eq, Copy, Clone)]
+pub enum PlayerPos {
     Pos(V2),
     Register(i32),
 }
@@ -96,15 +97,15 @@ impl GameRules {
 }
 
 pub struct GamePlayState {
-    player: PlayerPos,
-    player_bit: u8,
+    pub player: PlayerPos,
+    pub player_bit: u8,
     pages: HashMap<u8, PageState>,
-    cpu: Vec<CPU>,
+    pub cpu: Vec<CPU>,
     game_rules: GameRules,
 }
 
 #[derive(Debug, PartialEq, Eq, Copy, Clone)]
-enum MoveDir {
+pub enum MoveDir {
     Up,
     Left,
     Down,
@@ -154,7 +155,7 @@ fn step(p0: V2, d: MoveDir, mode: WrapingMode) -> V2 {
 }
 
 impl GamePlayState {
-    fn new() -> GamePlayState {
+    pub fn new() -> GamePlayState {
         GamePlayState {
             player: PlayerPos::Pos(V2::new()),
             player_bit: b'@',
@@ -179,7 +180,7 @@ impl GamePlayState {
         result
     }
 
-    fn from_grid(grid: ByteGrid) -> GamePlayState {
+    pub fn from_grid(grid: ByteGrid) -> GamePlayState {
         let mut state = GamePlayState::new();
         state.player = GamePlayState::get_start(&grid);
         state.pages.insert(DEFAULT_PAGE, PageState::from_grid(grid));
@@ -192,27 +193,48 @@ impl GamePlayState {
         state
     }
 
-    fn accessible(&self, p: u8) -> bool {
+    pub fn new_empty() -> GamePlayState {
+        let mut state = GamePlayState::new();
+        let grid = ByteGrid::new();
+        state.player = GamePlayState::get_start(&grid);
+        state.pages.insert(DEFAULT_PAGE, PageState::from_grid(grid));
+        if let Some(page) = &mut state.pages.get_mut(&DEFAULT_PAGE) {
+            if let PlayerPos::Pos(p) = &state.player {
+                page.memory[*p] = 0;
+            }
+        }
+        state.cpu[0].set_register(RegisterId::Page, DEFAULT_PAGE);
+        state
+    }
+
+    pub fn accessible(&self, p: u8) -> bool {
         return (p & self.player_bit) == 0;
     }
 
-    fn current_page(&self) -> Option<&PageState> {
+    pub fn current_page(&self) -> Option<&PageState> {
         let page_id = self.cpu[0].get_register(RegisterId::Page).value;
         self.pages.get(&page_id)
     }
 
-    fn effective_value(&self, page: &PageState, p: V2) -> u8 {
+    pub fn effective_value(&self, page: &PageState, p: V2) -> u8 {
         let v = page.memory[p];
-        v | self.player_bit
+        if self.player == PlayerPos::Pos(p) {
+            let v = page.memory[p];
+            v | self.player_bit
+        } else {
+            v
+        }
     }
 
-    fn move_player(&mut self, dir: MoveDir) {
+    pub fn move_player(&mut self, dir: MoveDir) {
         self.cpu[0].get_register(RegisterId::Page);
         let current_page = self.current_page().unwrap();
         match self.player {
             PlayerPos::Pos(v) => {
                 let target = step(v, dir, self.game_rules.wrap_mode);
+                eprintln!("ff t{:?}", target);
                 if self.accessible(self.effective_value(current_page, target)) {
+                    eprintln!("good ");
                     self.player = PlayerPos::Pos(target);
                 }
             }
@@ -224,21 +246,21 @@ impl GamePlayState {
     }
 }
 
-enum RegisterId {
+pub enum RegisterId {
     Data = 0,
     Page = 1,
     Compare = 2,
     PC = 3,
 }
 
-struct CPU {
+pub struct CPU {
     registers: Vec<Register>,
 }
 
-struct Register {
-    value: u8,
-    protected: bool,
-    name: String,
+pub struct Register {
+    pub value: u8,
+    pub protected: bool,
+    pub name: String,
 }
 
 impl CPU {
@@ -268,10 +290,10 @@ impl CPU {
             ],
         }
     }
-    fn get_register(&self, id: RegisterId) -> &Register {
+    pub fn get_register(&self, id: RegisterId) -> &Register {
         &self.registers[id as usize]
     }
-    fn set_register(&mut self, id: RegisterId, value: u8) {
+    pub fn set_register(&mut self, id: RegisterId, value: u8) {
         self.registers[id as usize].value = value;
     }
 }
@@ -354,5 +376,18 @@ mod tests {
             assert_eq!(step(*p0, *dir, WrapingMode::WrapLine), *expected_line);
             assert_eq!(step(*p0, *dir, WrapingMode::WrapGrid), *expected_grid);
         }
+    }
+
+
+    #[test]
+    fn effective_value() {
+        let st = GamePlayState::new_empty();
+        let current_page =  st.current_page().unwrap();
+        let v = st.effective_value(current_page, V2::make(0, 0));
+        assert_eq!(v, b'@');
+        let v = st.effective_value(current_page, V2::make(0, 1));
+        assert_eq!(v, 0u8);
+
+        //TODO: add combination with other bytes
     }
 }

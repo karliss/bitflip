@@ -14,10 +14,12 @@ use std::path::Path;
 
 use bytegrid::{ByteGrid, ByteGridDiff};
 use encoding::Encoding;
+use game_ui::*;
 use ui::*;
 
 mod bytegrid;
 mod encoding;
+mod game_ui;
 mod gameplay;
 mod resource;
 mod ui;
