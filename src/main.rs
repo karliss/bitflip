@@ -1,5 +1,7 @@
 #![feature(box_syntax, box_patterns)]
 #![feature(nll)]
+//TODO: enable dead_code check
+#![allow(dead_code)]
 #[macro_use]
 extern crate clap;
 
@@ -9,7 +11,6 @@ use clap::{App, Arg, ArgMatches};
 use std::fs::File;
 use std::io::prelude::*;
 use std::path::Path;
-use termion::{color, style};
 
 use bytegrid::{ByteGrid, ByteGridDiff};
 use encoding::Encoding;
@@ -89,9 +90,9 @@ fn run_patch(args: &ArgMatches) -> Result<(), ()> {
 fn run_game(args: &ArgMatches) -> Result<(), ()> {
     let mut stdout = std::io::stdout();
     {
-        let mut menu = GameUi::new();
         let mut context = UiContext::create(&stdout).ok_or(())?;
-        context.run(&mut menu);
+        let mut menu = GameUi::new(&mut context);
+        context.run(&mut menu).map_err(|_| ())?;
     }
 
     write!(

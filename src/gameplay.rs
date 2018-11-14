@@ -63,7 +63,7 @@ impl PageState {
             let tx = memory[(2, trigger_offset as u8)];
             let ty = memory[(3, trigger_offset as u8)];
             let triger_pos = joinu8(px, py);
-            if px != 0 && py != 0 && tx != 0 && ty != 0 {
+            if px != 0 && py != 0 {
                 triggers.insert(
                     triger_pos,
                     Trigger {
@@ -77,6 +77,7 @@ impl PageState {
                     },
                 );
             }
+            trigger_offset += 1;
         }
         ans
     }
@@ -135,7 +136,7 @@ fn step(p0: V2, d: MoveDir, mode: WrapingMode) -> V2 {
         MoveDir::Down => V2 { x: 0, y: 1 },
         MoveDir::Right => V2 { x: 1, y: 0 },
     };
-    let mut tp = p0 + dp;
+    let tp = p0 + dp;
     if tp.x >= 0 && tp.x <= GRID_MAX as i32 && tp.y >= 0 && tp.y <= GRID_MAX as i32 {
         tp
     } else {

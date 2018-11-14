@@ -1,6 +1,7 @@
 use std::any::Any;
-use std::io::{stdin, stdout, Stdout};
-use std::io::{Read, Write};
+use std::io::Stdout;
+use std::io::Write;
+use std::num::NonZeroU64;
 use std::thread;
 use std::time::Duration;
 use termion::event::{Event, Key};
@@ -10,7 +11,22 @@ use termion::screen::*;
 use termion::{async_stdin, AsyncReader};
 use vecmath::*;
 
+pub enum UiEventType {
+    Ok,
+    Canceled,
+    Result(Box<Any>),
+    Changed,
+    None,
+    NotConsumed,
+}
+
+pub struct UiEvent {
+    id: UiId,
+    e: UiEventType
+}
+
 pub struct Menu {
+    id: UiId,
     entries: Vec<String>,
     cancelable: bool,
     selected: usize,
@@ -18,9 +34,10 @@ pub struct Menu {
 }
 
 impl Menu {
-    pub fn new(entries: Vec<String>, cancelable: bool) -> Menu {
+    pub fn new(entries: Vec<String>, cancelable: bool, context: &mut UiContext) -> Menu {
         assert!(entries.len() > 0);
         Menu {
+            id: context.next_id(),
             entries,
             cancelable,
             selected: 0,
@@ -31,7 +48,7 @@ impl Menu {
     fn get_selected(&self) -> usize {
         return self.selected;
     }
-    fn get_result(&self) -> Option<Option<usize>> {
+    fn result(&self) -> Option<Option<usize>> {
         return self.result;
     }
 }
@@ -55,14 +72,14 @@ impl UiWidget for Menu {
         Ok(())
     }
 
-    fn input(&mut self, e: &Event) -> bool {
+    fn input(&mut self, e: &Event) -> Option<UiEvent> {
         match e {
             Event::Key(Key::Down) => {
                 self.selected += 1;
                 if self.selected >= self.entries.len() {
                     self.selected = 0;
                 }
-                true
+                self.event(UiEventType::Changed)
             }
             Event::Key(Key::Up) => {
                 self.selected = if self.selected > 0 {
@@ -70,48 +87,47 @@ impl UiWidget for Menu {
                 } else {
                     self.entries.len() - 1
                 };
-                true
+                self.event(UiEventType::Changed)
             }
             Event::Key(Key::Char(number @ '0'...'9')) => {
                 let n = number.to_digit(10).unwrap() as usize;
                 if n < self.entries.len() {
                     self.selected = n;
                 }
-                true
+                self.event(UiEventType::Changed)
             }
             Event::Key(Key::Char('\n')) => {
                 self.result = Some(Some(self.selected));
-                true
+                self.event(UiEventType::Result(box self.selected))
             }
 
             Event::Key(Key::Esc) => {
                 if self.cancelable {
                     self.result = None;
-                    true
+                    self.event(UiEventType::Canceled)
                 } else {
-                    false
+                    None
                 }
             }
-            _ => {
-                false
-            }
+            _ => None,
         }
     }
 
-    fn result(&self) -> Option<Box<dyn Any>> {
-        self.result.map(|v| Box::new(v) as Box<Any>)
-    }
-
-    fn run(&mut self, ui: &mut UiContext) -> Option<Box<Any>> {
-        None
+    fn get_id(&self) -> UiId {
+        self.id
     }
 
     fn resize(&mut self, _: Rectangle, _: V2) {}
 }
 
+#[derive(Debug, PartialEq, Eq, Copy, Clone)]
+pub struct UiId(NonZeroU64);
+
 pub struct UiContext<'a> {
     raw_out: AlternateScreen<::termion::raw::RawTerminal<::std::io::StdoutLock<'a>>>,
     async_in: AsyncReader,
+
+    id_counter: UiId,
 }
 
 impl<'a> UiContext<'a> {
@@ -120,26 +136,39 @@ impl<'a> UiContext<'a> {
             Some(UiContext {
                 raw_out: AlternateScreen::from(a),
                 async_in: async_stdin(),
+                id_counter: UiId(NonZeroU64::new(1).unwrap()),
             })
         } else {
             return None;
         }
     }
 
-    pub fn run(&mut self, widget: &mut UiWidget) -> Option<Box<Any>> {
-        widget.print(self);
-        while widget.result().is_none() {
+    pub fn run(&mut self, widget: &mut UiWidget) -> std::io::Result<()> {
+        widget.print(self)?;
+        let main_id = widget.get_id();
+        loop {
             let mut has_input = false;
             let mut retry = 5;
             while !has_input && retry > 0 {
                 while let Some(t) = (&mut self.async_in).events().next() {
                     match t {
                         Ok(Event::Key(Key::Ctrl('c'))) => {
-                            return None;
+                            return Ok(());
                         }
                         _ => {}
                     }
-                    widget.input(&t.unwrap());
+                    match widget.input(&t.unwrap()) {
+                        Some(UiEvent {id: main_id, e: UiEventType::Canceled}) => {
+                            return Ok(())
+                        }
+                        Some(UiEvent {id: main_id, e: UiEventType::Ok}) => {
+                            return Ok(())
+                        }
+                        Some(UiEvent {id: main_id, e: UiEventType::Result(_)}) => {
+                            return Ok(())
+                        }
+                        _ => {}
+                    }
                     has_input = true;
                 }
                 if !has_input {
@@ -147,21 +176,29 @@ impl<'a> UiContext<'a> {
                 }
                 retry -= 1;
             }
-            widget.print(self);
+            widget.print(self)?;
         }
-        widget.result()
+        Ok(())
+    }
+
+    pub fn next_id(&mut self) -> UiId {
+        let result = self.id_counter;
+        self.id_counter = UiId(NonZeroU64::new(u64::from(self.id_counter.0) + 1u64).unwrap());
+        result
     }
 }
 
 pub trait UiWidget {
     fn print(&self, ui: &mut UiContext) -> std::io::Result<()>;
-    fn input(&mut self, e: &Event) -> bool {
-        return false;
+    fn input(&mut self, _e: &Event) -> Option<UiEvent> {
+        return None;
     }
     //fn childWidgets(&mut self) -> Vec<&UiWidget> { Vec::new() }
     fn resize(&mut self, widget_size: Rectangle, window: V2);
-    fn run(&mut self, ui: &mut UiContext) -> Option<Box<Any>>;
-    fn result(&self) -> Option<Box<Any>>;
+    fn get_id(&self) -> UiId;
+    fn event(&self, e: UiEventType) -> Option<UiEvent> {
+        Some(UiEvent{id: self.get_id(), e})
+    }
 }
 
 enum GameState {
@@ -169,17 +206,23 @@ enum GameState {
     Gameplay,
 }
 pub struct GameUi {
+    id: UiId,
     state: GameState,
     main_menu: Menu,
     result: Option<Result<(), ()>>,
 }
 
 impl GameUi {
-    pub fn new() -> GameUi {
+    pub fn new(context: &mut UiContext) -> GameUi {
         GameUi {
+            id: context.next_id(),
             state: GameState::MainMenu,
             main_menu: {
-                let result = Menu::new(vec!["New game".to_owned(), "Exit".to_owned()], false);
+                let result = Menu::new(
+                    vec!["New game".to_owned(), "Exit".to_owned()],
+                    false,
+                    context,
+                );
                 result
             },
             result: None,
@@ -205,39 +248,42 @@ impl GameUi {
 }
 
 impl UiWidget for GameUi {
+    fn get_id(&self) -> UiId {
+        return self.id;
+    }
+
     fn print(&self, ui: &mut UiContext) -> std::io::Result<()> {
         self.current_widget().print(ui)
     }
 
-    fn input(&mut self, e: &Event) -> bool {
+    fn input(&mut self, e: &Event) -> Option<UiEvent> {
         let result = self.current_widget_mut().input(e);
-        match self.state {
-            GameState::MainMenu => {
-                if let Some(st) = self.main_menu.result() {
-                    if let Ok(v) = st.downcast::<Option<usize>>() {
-                        match v {
-                            box Some(1) => {
-                                self.result = Some(Result::Ok(()));
+        let main_menu_id = self.main_menu.get_id();
+        match result {
+            None => { return None; },
+            Some(r) => {
+                if r.id == main_menu_id {
+                    match r.e {
+                        UiEventType::Result(selected) => {
+                            if let Ok(v) =  selected.downcast::<usize>() {
+                                if *v == 1 {
+                                    return self.event(UiEventType::Canceled)
+                                }
                             }
-                            _ => {}
+                        },
+                        UiEventType::Canceled => {
+                            return self.event(UiEventType::Canceled)
                         }
+                        _ => {}
                     }
                 }
+                return None;
             }
-            GameState::Gameplay => {}
         }
-        result
+        None
     }
 
     fn resize(&mut self, widget_size: Rectangle, window: V2) {
         self.main_menu.resize(widget_size, window)
-    }
-
-    fn run(&mut self, ui: &mut UiContext) -> Option<Box<Any>> {
-        unimplemented!()
-    }
-
-    fn result(&self) -> Option<Box<Any>> {
-        self.result.map(|v| Box::new(v) as Box<Any>)
     }
 }
