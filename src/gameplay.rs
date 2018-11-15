@@ -24,8 +24,8 @@ struct Trigger {
     triggered: bool,
 }
 
-struct PageState {
-    memory: ByteGrid,
+pub struct PageState {
+    pub memory: ByteGrid,
     triggers: HashMap<u16, Trigger>,
 }
 
@@ -232,9 +232,7 @@ impl GamePlayState {
         match self.player {
             PlayerPos::Pos(v) => {
                 let target = step(v, dir, self.game_rules.wrap_mode);
-                eprintln!("ff t{:?}", target);
                 if self.accessible(self.effective_value(current_page, target)) {
-                    eprintln!("good ");
                     self.player = PlayerPos::Pos(target);
                 }
             }
@@ -378,11 +376,10 @@ mod tests {
         }
     }
 
-
     #[test]
     fn effective_value() {
         let st = GamePlayState::new_empty();
-        let current_page =  st.current_page().unwrap();
+        let current_page = st.current_page().unwrap();
         let v = st.effective_value(current_page, V2::make(0, 0));
         assert_eq!(v, b'@');
         let v = st.effective_value(current_page, V2::make(0, 1));

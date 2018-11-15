@@ -29,7 +29,9 @@ pub trait UiWidget {
     fn input(&mut self, _e: &Event) -> Option<UiEvent> {
         return None;
     }
-    //fn childWidgets(&mut self) -> Vec<&UiWidget> { Vec::new() }
+    fn child_widgets(&self) -> Vec<&UiWidget>; // { Vec::new() }
+    fn child_widgets_mut(&mut self) -> Vec<&mut UiWidget>; // { Vec::new() }
+
     fn resize(&mut self, widget_size: &Rectangle, window: &V2);
     fn get_id(&self) -> UiId;
     fn event(&self, e: UiEventType) -> Option<UiEvent> {
@@ -38,6 +40,15 @@ pub trait UiWidget {
             e,
         })
     }
+    fn update(&mut self) {
+        for child in self.child_widgets_mut() {
+            child.update();
+        }
+    }
+}
+
+pub trait DataWidget<T>: UiWidget {
+    fn print_data(&self, ui: &mut UiContext, data: T) -> std::io::Result<()>;
 }
 
 pub const DEFAULT_WINDOW_SIZE: Rectangle = Rectangle {
@@ -75,6 +86,7 @@ impl Menu {
 
 impl UiWidget for Menu {
     fn print(&self, ui: &mut UiContext) -> ::std::io::Result<()> {
+        //TODO: respect size
         write!(
             ui.raw_out,
             "{}{}{}",
@@ -137,7 +149,15 @@ impl UiWidget for Menu {
         self.id
     }
 
-    fn resize(&mut self, _widget_size: &Rectangle, _window: &V2) {} //TODO: respect size
+    fn resize(&mut self, _widget_size: &Rectangle, _window: &V2) {}
+
+    fn child_widgets(&self) -> Vec<&UiWidget> {
+        Vec::new()
+    }
+
+    fn child_widgets_mut(&mut self) -> Vec<&mut UiWidget> {
+        Vec::new()
+    }
 }
 
 #[derive(Debug, PartialEq, Eq, Copy, Clone)]
@@ -215,6 +235,7 @@ impl<'a> UiContext<'a> {
                 }
                 retry -= 1;
             }
+            widget.update();
             widget.print(self)?;
         }
         Ok(())
