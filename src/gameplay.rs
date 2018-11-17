@@ -174,6 +174,7 @@ impl GamePlayState {
                         x: x as i32,
                         y: y as i32,
                     });
+                    return result;
                 }
             }
         }
@@ -191,6 +192,13 @@ impl GamePlayState {
         }
         state.cpu[0].set_register(RegisterId::Page, DEFAULT_PAGE);
         state
+    }
+
+    pub fn from_path() -> std::io::Result<GamePlayState> {
+        let path = ::resource::get_resource_dir()?.join("levels/ram.txt");
+        let encoding = ::encoding::Encoding::get_encoding("437")?;
+        let grid = ByteGrid::load(path.as_path(), &encoding)?;
+        Ok(GamePlayState::from_grid(grid))
     }
 
     pub fn new_empty() -> GamePlayState {

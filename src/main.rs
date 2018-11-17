@@ -89,7 +89,7 @@ fn run_patch(args: &ArgMatches) -> Result<(), ()> {
     Ok(())
 }
 
-fn run_game(args: &ArgMatches) -> Result<(), ()> {
+fn run_game(_args: &ArgMatches) -> Result<(), ()> {
     let mut stdout = std::io::stdout();
     {
         let mut context = UiContext::create(&stdout).ok_or(())?;

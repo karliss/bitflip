@@ -238,7 +238,6 @@ impl<'a> UiContext<'a> {
             widget.update();
             widget.print(self)?;
         }
-        Ok(())
     }
 
     pub fn next_id(&mut self) -> UiId {

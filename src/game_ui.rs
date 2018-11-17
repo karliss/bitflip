@@ -1,7 +1,7 @@
 use gameplay::*;
 use std::io::Write;
+use termion::color;
 use termion::event::{Event, Key};
-use termion::{color, style};
 use ui::*;
 use vecmath::*;
 
@@ -83,6 +83,12 @@ impl UiWidget for GameUi {
                                 match *v {
                                     0 => {
                                         self.state = GameState::Gameplay;
+                                        let game_state = GamePlayState::from_path();
+                                        if let Ok(gs) = game_state {
+                                            self.gameplay_ui.set_state(gs);
+                                        } else {
+                                            return self.event(UiEventType::Canceled);
+                                        }
                                         return self.event(UiEventType::None);
                                     }
                                     1 => return self.event(UiEventType::Canceled),
@@ -124,6 +130,7 @@ struct GamePlayUI {
     panel_sizes: [Rectangle; PanelType::Last as usize],
     byte_view: ByteView,
     last_pos: V2,
+    need_clean: i32,
 }
 
 impl GamePlayUI {
@@ -135,6 +142,7 @@ impl GamePlayUI {
             panel_sizes: [DEFAULT_WINDOW_SIZE; PanelType::Last as usize],
             last_pos: V2::new(),
             byte_view: ByteView::new(ui),
+            need_clean: 0,
         }
     }
 
@@ -142,7 +150,55 @@ impl GamePlayUI {
         self.game = new_state;
     }
 
+    fn print_hbox_grid(&self, ui: &mut UiContext, sizes: &[Rectangle]) -> std::io::Result<()> {
+        if sizes.is_empty() {
+            return Ok(());
+        }
+        let boxg = sizes[0].grow(1);
+
+        //│ ┤ ╡ ╢ ╖ ╕ ╣ ║ ╗ ╝ ╜ ╛ ┐ └ ┴ ┬ ├ ─ ┼ ╞ ╟ ╚ ╔ ╩ ╦ ╠ ═ ╬ ╧ ╨ ╤ ╥ ╙ ╘ ╒ ╓ ╫ ╪ ┘ ┌
+        ui.goto(boxg.pos)?;
+        if boxg.size.x >= 2 {
+            write!(ui.raw_out, "{:═<1$}", "╔", (boxg.size.x - 1) as usize)?;
+        }
+        for rec in &sizes[1..] {
+            if rec.size.x >= 0 {
+                write!(ui.raw_out, "{:═<1$}", "╦", (rec.size.x + 1) as usize)?;
+            }
+        }
+        write!(ui.raw_out, "╗")?;
+
+        ui.goto(boxg.bottom_left())?;
+        if boxg.size.x >= 2 {
+            write!(ui.raw_out, "{:═<1$}", "╚", (boxg.size.x - 1) as usize)?;
+        }
+        for rec in &sizes[1..] {
+            if rec.size.x >= 0 {
+                write!(ui.raw_out, "{:═<1$}", "╩", (rec.size.x + 1) as usize)?;
+            }
+        }
+        write!(ui.raw_out, "╝")?;
+
+        let right = sizes.last().unwrap().right() + 1;
+        for y in sizes[0].top()..(sizes[0].bottom() + 1) {
+            for rec in sizes {
+                ui.goto(V2::make(rec.left() - 1, y))?;
+                write!(ui.raw_out, "║")?;
+            }
+            ui.goto(V2::make(right, y))?;
+            write!(ui.raw_out, "║")?;
+        }
+
+        Ok(())
+    }
+
     fn print_edges(&self, ui: &mut UiContext) -> std::io::Result<()> {
+        let sizes = [
+            *self.get_panel_size(PanelType::Binary),
+            *self.get_panel_size(PanelType::Text),
+            *self.get_panel_size(PanelType::Right),
+        ];
+        self.print_hbox_grid(ui, &sizes)?;
         Ok(())
     }
 
@@ -150,7 +206,7 @@ impl GamePlayUI {
         write!(ui.raw_out, "{}", ::termion::cursor::Hide)?;
         ui.goto(self.size.pos)?;
         match self.game.player {
-            PlayerPos::Pos(p) => {
+            PlayerPos::Pos(_) => {
                 write!(
                     ui.raw_out,
                     "Player location: SYSTEM RAM (page:{})",
@@ -190,10 +246,8 @@ impl GamePlayUI {
 
 impl UiWidget for GamePlayUI {
     fn print(&self, ui: &mut UiContext) -> std::io::Result<()> {
-        let p = self.size;
-        for y in 0..p.size.y {
-            ui.goto(p.pos + V2::make(0, y));
-            write!(ui.raw_out, "{:_<1$}", "_", p.size.x as usize);
+        if self.need_clean > 0 {
+            write!(ui.raw_out, "{}", ::termion::clear::All)?;
         }
         self.byte_view.print_data(ui, (&self.game, self.last_pos))?;
         self.print_top_panel(ui)?;
@@ -216,6 +270,12 @@ impl UiWidget for GamePlayUI {
             }
             Event::Key(Key::Right) | Event::Key(Key::Char('l')) => {
                 self.game.move_player(MoveDir::Right);
+            }
+            Event::Key(Key::Char('x')) => {
+                self.byte_view.mode = match self.byte_view.mode {
+                    ByteViewMode::Hex => ByteViewMode::Bits,
+                    ByteViewMode::Bits => ByteViewMode::Hex,
+                };
             }
             _ => {}
         }
@@ -252,13 +312,15 @@ impl UiWidget for GamePlayUI {
         self.byte_view.resize(&binary_size, window);
 
         self.panel_sizes[PanelType::Text as usize] = Rectangle {
-            pos: self.byte_view.size.pos + V2::make(left_width + 1, 0),
+            pos: self.byte_view.size.top_right() + V2::make(2, 0),
             size: V2::make(middle_width, bottom_size),
         };
+        let right_pos = self.get_panel_size(PanelType::Text).top_right() + V2::make(2, 0);
         self.panel_sizes[PanelType::Right as usize] = Rectangle {
-            pos: bottom_top + V2::make(self.size.size.y - 1 - right_size, 1),
+            pos: right_pos,
             size: V2::make(right_size, bottom_size),
         };
+        self.need_clean = 2;
     }
 
     fn get_id(&self) -> UiId {
@@ -274,6 +336,9 @@ impl UiWidget for GamePlayUI {
         }
         for w in self.child_widgets_mut() {
             w.update();
+        }
+        if self.need_clean > 0 {
+            self.need_clean -= 1;
         }
     }
 }
@@ -311,30 +376,30 @@ impl DataWidget<(&GamePlayState, V2)> for ByteView {
         };
         let block_count = (self.size.size.x + 1) / (block_width + 1);
         for y in 0..self.size.size.y {
-            ui.goto(self.size.pos + V2::make(0, y));
+            ui.goto(self.size.pos + V2::make(0, y))?;
             let my = player.y + y - (self.size.size.y / 2);
             if my < 0 || my >= 256 {
-                write!(ui.raw_out, "{:1$}", " ", self.size.size.x as usize);
+                write!(ui.raw_out, "{:1$}", " ", self.size.size.x as usize)?;
             } else {
                 let mut px = 0;
                 for block_id in 0..block_count {
                     let mx = player.x + block_id - (block_count / 2);
                     if block_id > 0 {
-                        write!(ui.raw_out, " ");
+                        write!(ui.raw_out, " ")?;
                         px += 1;
                     }
 
                     if mx < 0 || mx >= 256 {
-                        write!(ui.raw_out, "{:1$}", " ", block_width as usize);
+                        write!(ui.raw_out, "{:1$}", " ", block_width as usize)?;
                     } else {
                         let byte =
-                            data.effective_value(data.current_page().unwrap(), V2::make(my, mx));
+                            data.effective_value(data.current_page().unwrap(), V2::make(mx, my));
                         match self.mode {
                             ByteViewMode::Bits => {
-                                write!(ui.raw_out, "{:08b}", byte);
+                                write!(ui.raw_out, "{:08b}", byte)?;
                             }
                             ByteViewMode::Hex => {
-                                write!(ui.raw_out, "{:02x}", byte);
+                                write!(ui.raw_out, "{:02x}", byte)?;
                             }
                         }
                     }
@@ -342,7 +407,7 @@ impl DataWidget<(&GamePlayState, V2)> for ByteView {
                 }
                 let padding = self.size.size.x - px;
                 if padding > 0 {
-                    write!(ui.raw_out, "{:1$}", " ", padding as usize);
+                    write!(ui.raw_out, "{:1$}", " ", padding as usize)?;
                 }
             }
         }
