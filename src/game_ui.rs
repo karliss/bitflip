@@ -1,7 +1,10 @@
-use gameplay::*;
 use std::io::Write;
+
 use termion::color;
 use termion::event::{Event, Key};
+
+use encoding::Encoding;
+use gameplay::*;
 use ui::*;
 use vecmath::*;
 
@@ -129,6 +132,7 @@ struct GamePlayUI {
     game: GamePlayState,
     panel_sizes: [Rectangle; PanelType::Last as usize],
     byte_view: ByteView,
+    text_view: TextView,
     last_pos: V2,
     need_clean: i32,
 }
@@ -142,6 +146,7 @@ impl GamePlayUI {
             panel_sizes: [DEFAULT_WINDOW_SIZE; PanelType::Last as usize],
             last_pos: V2::new(),
             byte_view: ByteView::new(ui),
+            text_view: TextView::new(ui),
             need_clean: 0,
         }
     }
@@ -249,9 +254,10 @@ impl UiWidget for GamePlayUI {
         if self.need_clean > 0 {
             write!(ui.raw_out, "{}", ::termion::clear::All)?;
         }
-        self.byte_view.print_data(ui, (&self.game, self.last_pos))?;
         self.print_top_panel(ui)?;
         self.print_edges(ui)?;
+        self.byte_view.print_data(ui, (&self.game, self.last_pos))?;
+        self.text_view.print_data(ui, (&self.game, self.last_pos))?;
         ui.raw_out.flush()?;
         Ok(())
     }
@@ -283,11 +289,11 @@ impl UiWidget for GamePlayUI {
     }
 
     fn child_widgets(&self) -> Vec<&UiWidget> {
-        vec![&self.byte_view]
+        vec![&self.byte_view, &self.text_view]
     }
 
     fn child_widgets_mut(&mut self) -> Vec<&mut UiWidget> {
-        vec![&mut self.byte_view]
+        vec![&mut self.byte_view, &mut self.text_view]
     }
 
     fn resize(&mut self, widget_size: &Rectangle, window: &V2) {
@@ -311,10 +317,13 @@ impl UiWidget for GamePlayUI {
         self.panel_sizes[PanelType::Binary as usize] = binary_size;
         self.byte_view.resize(&binary_size, window);
 
-        self.panel_sizes[PanelType::Text as usize] = Rectangle {
+        let text_size = Rectangle {
             pos: self.byte_view.size.top_right() + V2::make(2, 0),
             size: V2::make(middle_width, bottom_size),
         };
+        self.text_view.resize(&text_size, window);
+        self.panel_sizes[PanelType::Text as usize] = text_size;
+
         let right_pos = self.get_panel_size(PanelType::Text).top_right() + V2::make(2, 0);
         self.panel_sizes[PanelType::Right as usize] = Rectangle {
             pos: right_pos,
@@ -418,6 +427,78 @@ impl DataWidget<(&GamePlayState, V2)> for ByteView {
 
 impl UiWidget for ByteView {
     fn print(&self, _ui: &mut UiContext) -> std::io::Result<()> {
+        Ok(())
+    }
+
+    fn child_widgets(&self) -> Vec<&UiWidget> {
+        Vec::new()
+    }
+
+    fn child_widgets_mut(&mut self) -> Vec<&mut UiWidget> {
+        Vec::new()
+    }
+
+    fn resize(&mut self, widget_size: &Rectangle, _window: &V2) {
+        self.size = *widget_size;
+    }
+
+    fn get_id(&self) -> UiId {
+        self.id
+    }
+}
+
+struct TextView {
+    id: UiId,
+    size: Rectangle,
+    encoding: Encoding,
+}
+
+impl TextView {
+    fn new(ui: &mut UiContext) -> TextView {
+        TextView {
+            id: ui.next_id(),
+            size: DEFAULT_WINDOW_SIZE,
+            encoding: Encoding::get_encoding("437").unwrap(),
+        }
+    }
+}
+
+impl DataWidget<(&GamePlayState, V2)> for TextView {
+    fn print_data(
+        &self,
+        ui: &mut UiContext,
+        (data, last_pos): (&GamePlayState, V2),
+    ) -> std::io::Result<()> {
+        let mut buf = [0u8; 16];
+        for y in 0..self.size.size.y {
+            ui.goto(self.size.pos + V2::make(0, y))?;
+            let my = last_pos.y + y - (self.size.size.y / 2);
+            if my < 0 || my >= 256 {
+                write!(ui.raw_out, "{:1$}", " ", self.size.size.x as usize)?;
+            } else {
+                let mut px = 0;
+                for column in 0..self.size.size.x {
+                    let mx = last_pos.x + column - (self.size.size.x / 2);
+
+                    if mx < 0 || mx >= 256 {
+                        write!(ui.raw_out, " ")?;
+                    } else {
+                        let byte =
+                            data.effective_value(data.current_page().unwrap(), V2::make(mx, my));
+                        let c = self.encoding.byte_to_char[byte as usize];
+                        let str = c.encode_utf8(&mut buf);
+                        ui.raw_out.write_all(str.as_bytes())?;
+                    }
+                }
+            }
+        }
+
+        Ok(())
+    }
+}
+
+impl UiWidget for TextView {
+    fn print(&self, ui: &mut UiContext) -> std::io::Result<()> {
         Ok(())
     }
 
