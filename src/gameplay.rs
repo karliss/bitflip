@@ -4,7 +4,8 @@ use bytegrid::ByteGrid;
 use vecmath::*;
 
 const GRID_MAX: u8 = 0xff;
-const PLAYER_VAL: u8 = b'@';
+pub const PLAYER_VAL: u8 = b'@';
+pub const PLAYER_OFFSET: usize = 6;
 const DEFAULT_PAGE: u8 = 42;
 
 #[derive(Debug, PartialEq, Eq, Copy, Clone)]

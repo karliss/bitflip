@@ -401,13 +401,41 @@ impl DataWidget<(&GamePlayState, V2)> for ByteView {
                     if mx < 0 || mx >= 256 {
                         write!(ui.raw_out, "{:1$}", " ", block_width as usize)?;
                     } else {
-                        let byte =
-                            data.effective_value(data.current_page().unwrap(), V2::make(mx, my));
+                        let pos = V2::make(mx, my);
+                        let byte = data.effective_value(data.current_page().unwrap(), pos);
+                        let is_player_pos = data.player == PlayerPos::Pos(pos);
+                        if !is_player_pos {
+                            if data.accessible(byte) {
+                                write!(ui.raw_out, "{}", color::Fg(color::LightWhite))?;
+                            } else {
+                                write!(ui.raw_out, "{}", color::Fg(color::Cyan))?;
+                            }
+                        }
                         match self.mode {
                             ByteViewMode::Bits => {
-                                write!(ui.raw_out, "{:08b}", byte)?;
+                                if is_player_pos {
+                                    let left_part_size = 8 - PLAYER_OFFSET - 1;
+                                    let left_part = (byte >> (8 - left_part_size));
+                                    let right_part = (byte & (PLAYER_VAL - 1));
+                                    let right_part_size = PLAYER_OFFSET;
+                                    write!(
+                                        ui.raw_out,
+                                        "{color_back}{left_part:0>left_width$b}{color_bit}1{color_back}{right_part:0>right_width$b}",
+                                        color_back=color::Fg(color::LightWhite),
+                                        left_part=left_part,
+                                        left_width = left_part_size,
+                                        color_bit=color::Fg(color::Yellow),
+                                        right_part=right_part,
+                                        right_width = right_part_size
+                                    )?;
+                                } else {
+                                    write!(ui.raw_out, "{:08b}", byte)?;
+                                }
                             }
                             ByteViewMode::Hex => {
+                                if is_player_pos {
+                                    write!(ui.raw_out, "{}", color::Fg(color::Yellow))?;
+                                }
                                 write!(ui.raw_out, "{:02x}", byte)?;
                             }
                         }
@@ -420,7 +448,7 @@ impl DataWidget<(&GamePlayState, V2)> for ByteView {
                 }
             }
         }
-
+        write!(ui.raw_out, "{}", color::Fg(color::Reset))?;
         Ok(())
     }
 }

@@ -4,11 +4,13 @@ use std::io::Write;
 use std::num::NonZeroU64;
 use std::thread;
 use std::time::Duration;
+
+use termion::{async_stdin, AsyncReader};
 use termion::event::{Event, Key};
 use termion::input::TermRead;
 use termion::raw::IntoRawMode;
 use termion::screen::*;
-use termion::{async_stdin, AsyncReader};
+
 use vecmath::*;
 
 pub enum UiEventType {
@@ -197,19 +199,7 @@ impl<'a> UiContext<'a> {
         let mut last_size = (0u16, 0u16);
         loop {
             let mut has_input = false;
-            let mut retry = 5;
-            let new_size = ::termion::terminal_size()?;
-            if new_size != last_size {
-                let window_size = V2::make(new_size.0 as i32, new_size.1 as i32);
-                widget.resize(
-                    &Rectangle {
-                        pos: V2::make(0, 0),
-                        size: window_size,
-                    },
-                    &window_size,
-                );
-                last_size = new_size;
-            }
+            let mut retry = 5000;
             while !has_input && retry > 0 {
                 while let Some(t) = (&mut self.async_in).events().next() {
                     match t {
@@ -231,11 +221,26 @@ impl<'a> UiContext<'a> {
                     has_input = true;
                 }
                 if !has_input {
-                    thread::sleep(Duration::from_millis(10));
+                    thread::sleep(Duration::from_millis(20));
+                }
+                let new_size = ::termion::terminal_size()?;
+                if new_size != last_size {
+                    let window_size = V2::make(new_size.0 as i32, new_size.1 as i32);
+                    widget.resize(
+                        &Rectangle {
+                            pos: V2::make(0, 0),
+                            size: window_size,
+                        },
+                        &window_size,
+                    );
+                    last_size = new_size;
+                    break;
                 }
                 retry -= 1;
             }
-            widget.update();
+            if has_input {
+                widget.update();
+            }
             widget.print(self)?;
         }
     }
