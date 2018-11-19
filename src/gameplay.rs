@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::path::Path;
 
 use bytegrid::ByteGrid;
 use vecmath::*;
@@ -155,6 +156,11 @@ fn step(p0: V2, d: MoveDir, mode: WrapingMode) -> V2 {
     }
 }
 
+enum LevelFormat {
+    SingleGrid,
+    Folder,
+}
+
 impl GamePlayState {
     pub fn new() -> GamePlayState {
         GamePlayState {
@@ -215,6 +221,23 @@ impl GamePlayState {
         state.cpu[0].set_register(RegisterId::Page, DEFAULT_PAGE);
         state
     }
+
+    fn detect_level_format(path: &Path) -> std::io::Result<LevelFormat> {
+        if path.is_dir() {
+            return Ok(LevelFormat::Folder);
+        }
+        if path.is_file() {
+            return Ok(LevelFormat::SingleGrid);
+        }
+        return Err(::std::io::Error::new(
+            ::std::io::ErrorKind::InvalidData,
+            "Unrecognized level format",
+        ));
+    }
+
+    /*pub fn load_from_path(path: &Path) -> std::io::Result<GamePlayState> {
+    
+    }*/
 
     pub fn accessible(&self, p: u8) -> bool {
         return (p & self.player_bit) == 0;

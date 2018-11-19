@@ -27,14 +27,14 @@ pub struct UiEvent {
 }
 
 pub trait UiWidget {
-    fn print(&self, ui: &mut UiContext) -> std::io::Result<()>;
+    fn print(&mut self, ui: &mut UiContext) -> std::io::Result<()>;
     fn input(&mut self, _e: &Event) -> Option<UiEvent> {
         return None;
     }
     fn child_widgets(&self) -> Vec<&UiWidget>; // { Vec::new() }
     fn child_widgets_mut(&mut self) -> Vec<&mut UiWidget>; // { Vec::new() }
 
-    fn resize(&mut self, widget_size: &Rectangle, window: &V2);
+    fn resize(&mut self, widget_size: &Rectangle);
     fn get_id(&self) -> UiId;
     fn event(&self, e: UiEventType) -> Option<UiEvent> {
         Some(UiEvent {
@@ -50,7 +50,7 @@ pub trait UiWidget {
 }
 
 pub trait DataWidget<T>: UiWidget {
-    fn print_data(&self, ui: &mut UiContext, data: T) -> std::io::Result<()>;
+    fn print_data(&mut self, ui: &mut UiContext, data: T) -> std::io::Result<()>;
 }
 
 pub const DEFAULT_WINDOW_SIZE: Rectangle = Rectangle {
@@ -87,7 +87,7 @@ impl Menu {
 }
 
 impl UiWidget for Menu {
-    fn print(&self, ui: &mut UiContext) -> ::std::io::Result<()> {
+    fn print(&mut self, ui: &mut UiContext) -> ::std::io::Result<()> {
         //TODO: respect size
         write!(
             ui.raw_out,
@@ -151,7 +151,7 @@ impl UiWidget for Menu {
         self.id
     }
 
-    fn resize(&mut self, _widget_size: &Rectangle, _window: &V2) {}
+    fn resize(&mut self, _widget_size: &Rectangle) {}
 
     fn child_widgets(&self) -> Vec<&UiWidget> {
         Vec::new()
@@ -226,13 +226,10 @@ impl<'a> UiContext<'a> {
                 let new_size = ::termion::terminal_size()?;
                 if new_size != last_size {
                     let window_size = V2::make(new_size.0 as i32, new_size.1 as i32);
-                    widget.resize(
-                        &Rectangle {
-                            pos: V2::make(0, 0),
-                            size: window_size,
-                        },
-                        &window_size,
-                    );
+                    widget.resize(&Rectangle {
+                        pos: V2::make(0, 0),
+                        size: window_size,
+                    });
                     last_size = new_size;
                     break;
                 }
