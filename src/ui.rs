@@ -186,14 +186,21 @@ impl<'a> UiContext<'a> {
     }
 
     pub fn goto(&mut self, p: V2) -> std::io::Result<()> {
+        //eprint!("ff {} {}", p.x, p.y);
+        //TODO: sanity check
         write!(
             self.raw_out,
             "{}",
-            ::termion::cursor::Goto(1 + p.x as u16, 1 + p.y as u16),
+            ::termion::cursor::Goto((1 + p.x) as u16, (1 + p.y) as u16),
         )
     }
 
     pub fn run(&mut self, widget: &mut UiWidget) -> std::io::Result<()> {
+        let initial_size = ::termion::terminal_size()?;
+        widget.resize(&Rectangle {
+            pos: V2::make(0, 0),
+            size: V2::make(initial_size.0 as i32, initial_size.1 as i32),
+        });
         widget.print(self)?;
         let main_id = widget.get_id();
         let mut last_size = (0u16, 0u16);

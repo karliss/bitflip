@@ -86,7 +86,7 @@ impl UiWidget for GameUi {
                                 match *v {
                                     0 => {
                                         self.state = GameState::Gameplay;
-                                        let game_state = GamePlayState::from_path();
+                                        let game_state = GamePlayState::load_tmp();
                                         if let Ok(gs) = game_state {
                                             self.gameplay_ui.set_state(gs);
                                         } else {
@@ -126,7 +126,7 @@ impl UiWidget for GameUi {
     }
 }
 
-struct GamePlayUI {
+pub struct GamePlayUI {
     id: UiId,
     size: Rectangle,
     game: GamePlayState,
@@ -140,7 +140,7 @@ struct GamePlayUI {
 }
 
 impl GamePlayUI {
-    fn new(ui: &mut UiContext) -> GamePlayUI {
+    pub fn new(ui: &mut UiContext) -> GamePlayUI {
         GamePlayUI {
             id: ui.next_id(),
             size: DEFAULT_WINDOW_SIZE,
@@ -155,8 +155,16 @@ impl GamePlayUI {
         }
     }
 
-    fn set_state(&mut self, new_state: GamePlayState) {
+    pub fn set_state(&mut self, new_state: GamePlayState) {
         self.game = new_state;
+    }
+
+    fn player_print_pos(&self) -> V2 {
+        if let PlayerPos::Pos(p) = self.game.player {
+            p
+        } else {
+            self.last_pos
+        }
     }
 
     fn print_hbox_grid(&self, ui: &mut UiContext, sizes: &[Rectangle]) -> std::io::Result<()> {
@@ -218,7 +226,7 @@ impl GamePlayUI {
             PlayerPos::Pos(_) => {
                 write!(
                     ui.raw_out,
-                    "Player location: SYSTEM RAM (page:{})",
+                    "Player location: SYSTEM RAM (page:{:02x})",
                     self.game.cpu[0].get_register(RegisterId::Page).value
                 )?;
             }
@@ -271,8 +279,10 @@ impl UiWidget for GamePlayUI {
             }
             self.print_top_panel(ui)?;
             self.print_edges(ui)?;
-            self.byte_view.print_data(ui, (&self.game, self.last_pos))?;
-            self.text_view.print_data(ui, (&self.game, self.last_pos))?;
+            self.byte_view
+                .print_data(ui, (&self.game, self.player_print_pos()))?;
+            self.text_view
+                .print_data(ui, (&self.game, self.player_print_pos()))?;
         }
         ui.raw_out.flush()?;
         Ok(())
@@ -445,7 +455,7 @@ impl DataWidget<(&GamePlayState, V2)> for ByteView {
                         write!(ui.raw_out, "{:1$}", " ", block_width as usize)?;
                     } else {
                         let pos = V2::make(mx, my);
-                        let byte = data.effective_value(data.current_page().unwrap(), pos);
+                        let byte = data.effective_value(data.current_page(), pos);
                         let is_player_pos = data.player == PlayerPos::Pos(pos);
                         if !is_player_pos {
                             if data.accessible(byte) {
@@ -457,19 +467,19 @@ impl DataWidget<(&GamePlayState, V2)> for ByteView {
                         match self.mode {
                             ByteViewMode::Bits => {
                                 if is_player_pos {
-                                    let left_part_size = 8 - PLAYER_OFFSET - 1;
+                                    let left_part_size = 8 - data.player_offset - 1;
                                     let left_part = byte >> (8 - left_part_size);
-                                    let right_part = byte & (PLAYER_VAL - 1);
-                                    let right_part_size = PLAYER_OFFSET;
+                                    let right_part = byte & (data.player_mask() - 1);
+                                    let right_part_size = data.player_offset;
                                     write!(
                                         ui.raw_out,
                                         "{color_back}{left_part:0>left_width$b}{color_bit}1{color_back}{right_part:0>right_width$b}",
                                         color_back=color::Fg(color::LightWhite),
                                         left_part=left_part,
-                                        left_width = left_part_size,
+                                        left_width = left_part_size.into(),
                                         color_bit=color::Fg(color::Yellow),
                                         right_part=right_part,
-                                        right_width = right_part_size
+                                        right_width = right_part_size.into()
                                     )?;
                                 } else {
                                     write!(ui.raw_out, "{:08b}", byte)?;
@@ -554,7 +564,7 @@ impl DataWidget<(&GamePlayState, V2)> for TextView {
                         write!(ui.raw_out, " ")?;
                     } else {
                         let pos = V2::make(mx, my);
-                        let byte = data.effective_value(data.current_page().unwrap(), pos);
+                        let byte = data.effective_value(data.current_page(), pos);
                         let is_player_pos = data.player == PlayerPos::Pos(pos);
                         let c = self.encoding.byte_to_char[byte as usize];
                         let str = c.encode_utf8(&mut buf);

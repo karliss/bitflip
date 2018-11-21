@@ -4,13 +4,16 @@
 #![allow(dead_code)]
 #[macro_use]
 extern crate clap;
-
+#[macro_use]
+extern crate serde_derive;
+extern crate serde_yaml;
 extern crate termion;
 
-use clap::{App, Arg, ArgMatches};
 use std::fs::File;
 use std::io::prelude::*;
 use std::path::Path;
+
+use clap::{App, Arg, ArgMatches};
 
 use bytegrid::{ByteGrid, ByteGridDiff};
 use encoding::Encoding;
@@ -107,6 +110,32 @@ fn run_game(_args: &ArgMatches) -> Result<(), ()> {
     Ok(())
 }
 
+fn run_single_level(args: &ArgMatches) -> Result<(), ()> {
+    let mut stdout = std::io::stdout();
+    {
+        let game_data = ::gameplay::GamePlayState::load_from_path(Path::new(
+            args.value_of(&"path").unwrap().into(),
+        ))
+        .map_err(|e| {
+            eprintln!("{:?}", e);
+        })?; //TODO: error handling
+        let mut context = UiContext::create(&stdout).ok_or(())?;
+
+        let mut ui = GamePlayUI::new(&mut context);
+        ui.set_state(game_data);
+        context.run(&mut ui).map_err(|_| ())?;
+    }
+
+    write!(
+        stdout,
+        "{}{}",
+        ::termion::style::Reset,
+        ::termion::cursor::Show
+    )
+    .map_err(|_| ())?;
+    Ok(())
+}
+
 fn main() {
     let matches = App::new("ethdec")
         .version(crate_version!())
@@ -127,11 +156,17 @@ fn main() {
                 .arg(Arg::with_name("patch"))
                 .arg(Arg::with_name("output").short("o").takes_value(true)),
         )
+        .subcommand(
+            clap::SubCommand::with_name("play")
+                .about("Play single level")
+                .arg(Arg::with_name("path")),
+        )
         .get_matches();
 
     let result = match matches.subcommand() {
         ("diff", Some(m)) => run_diff(m),
         ("patch", Some(m)) => run_patch(m),
+        ("play", Some(m)) => run_single_level(m),
         _ => run_game(&matches),
     };
     ::std::process::exit(match result {

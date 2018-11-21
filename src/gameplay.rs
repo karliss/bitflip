@@ -1,12 +1,14 @@
 use std::collections::HashMap;
+use std::io::{Error, ErrorKind};
 use std::path::Path;
 
 use bytegrid::ByteGrid;
+use encoding::Encoding;
 use vecmath::*;
 
 const GRID_MAX: u8 = 0xff;
-pub const PLAYER_VAL: u8 = b'@';
-pub const PLAYER_OFFSET: usize = 6;
+const PLAYER_VAL: u8 = b'@';
+const PLAYER_OFFSET: usize = 6;
 const DEFAULT_PAGE: u8 = 42;
 
 #[derive(Debug, PartialEq, Eq, Copy, Clone)]
@@ -15,15 +17,27 @@ pub enum PlayerPos {
     Register(i32),
 }
 
+#[derive(Serialize, Deserialize, Copy, Clone)]
 enum TriggerKind {
     SetPC(u16),
 }
 
+#[derive(Serialize, Deserialize, Clone)]
 struct Trigger {
     pos: V2,
-    kind: TriggerKind,
+    effect: TriggerKind,
+    #[serde(default = "trigger_default_one_time")]
     one_time: bool,
+    #[serde(default)]
+    #[serde(skip_serializing_if = "trigger_skip_triggered")]
     triggered: bool,
+}
+
+fn trigger_skip_triggered(v: &bool) -> bool {
+    *v == false
+}
+fn trigger_default_one_time() -> bool {
+    true
 }
 
 pub struct PageState {
@@ -74,7 +88,7 @@ impl PageState {
                             x: px as i32,
                             y: py as i32,
                         },
-                        kind: TriggerKind::SetPC(joinu8(tx, ty)),
+                        effect: TriggerKind::SetPC(joinu8(tx, ty)),
                         one_time: true,
                         triggered: false,
                     },
@@ -86,7 +100,9 @@ impl PageState {
     }
 }
 
+#[derive(Serialize, Deserialize, Default)]
 struct GameRules {
+    #[serde(default)]
     wrap_mode: WrapingMode,
 }
 
@@ -100,10 +116,12 @@ impl GameRules {
 
 pub struct GamePlayState {
     pub player: PlayerPos,
-    pub player_bit: u8,
+    pub player_page: u8,
+    pub player_offset: u8,
     pages: HashMap<u8, PageState>,
     pub cpu: Vec<CPU>,
     game_rules: GameRules,
+    null_page: PageState,
 }
 
 #[derive(Debug, PartialEq, Eq, Copy, Clone)]
@@ -114,11 +132,17 @@ pub enum MoveDir {
     Right,
 }
 
-#[derive(Debug, PartialEq, Eq, Copy, Clone)]
+#[derive(Debug, PartialEq, Eq, Copy, Clone, Serialize, Deserialize)]
 enum WrapingMode {
     Block,
     WrapLine,
     WrapGrid,
+}
+
+impl Default for WrapingMode {
+    fn default() -> WrapingMode {
+        WrapingMode::Block
+    }
 }
 
 fn step(p0: V2, d: MoveDir, mode: WrapingMode) -> V2 {
@@ -159,28 +183,35 @@ fn step(p0: V2, d: MoveDir, mode: WrapingMode) -> V2 {
 enum LevelFormat {
     SingleGrid,
     Folder,
+    RBStorage,
 }
 
 impl GamePlayState {
     pub fn new() -> GamePlayState {
         GamePlayState {
             player: PlayerPos::Pos(V2::new()),
-            player_bit: b'@',
+            player_page: 0,
+            player_offset: PLAYER_OFFSET as u8,
             pages: HashMap::new(),
             cpu: vec![CPU::new()],
             game_rules: GameRules::new(),
+            null_page: PageState::new(),
         }
     }
 
-    fn get_start(grid: &ByteGrid) -> PlayerPos {
-        let mut result = PlayerPos::Pos(V2::new());
+    pub fn player_mask(&self) -> u8 {
+        1 << self.player_offset
+    }
+
+    fn get_start(grid: &ByteGrid) -> V2 {
+        let mut result = V2::new();
         for y in 0u8..=GRID_MAX {
             for x in 0u8..=GRID_MAX {
                 if grid[(x, y)] == PLAYER_VAL {
-                    result = PlayerPos::Pos(V2 {
+                    result = V2 {
                         x: x as i32,
                         y: y as i32,
-                    });
+                    };
                     return result;
                 }
             }
@@ -188,37 +219,45 @@ impl GamePlayState {
         result
     }
 
+    fn set_initial_page(&mut self, page: u8) {
+        self.player_page = page;
+        self.cpu[0].set_register(RegisterId::Page, page);
+    }
+
     pub fn from_grid(grid: ByteGrid) -> GamePlayState {
         let mut state = GamePlayState::new();
-        state.player = GamePlayState::get_start(&grid);
+        state.player = PlayerPos::Pos(GamePlayState::get_start(&grid));
         state.pages.insert(DEFAULT_PAGE, PageState::from_grid(grid));
         if let Some(page) = &mut state.pages.get_mut(&DEFAULT_PAGE) {
             if let PlayerPos::Pos(p) = &state.player {
                 page.memory[*p] = 0;
             }
         }
-        state.cpu[0].set_register(RegisterId::Page, DEFAULT_PAGE);
+        state.set_initial_page(DEFAULT_PAGE);
         state
     }
 
-    pub fn from_path() -> std::io::Result<GamePlayState> {
-        let path = ::resource::get_resource_dir()?.join("levels/ram.txt");
+    pub fn load_tmp() -> std::io::Result<GamePlayState> {
+        GamePlayState::load_from_path(&::resource::get_resource_dir()?.join("levels/ram.txt"))
+    }
+
+    pub fn single_from_path(path: &Path) -> std::io::Result<GamePlayState> {
         let encoding = ::encoding::Encoding::get_encoding("437")?;
-        let grid = ByteGrid::load(path.as_path(), &encoding)?;
+        let grid = ByteGrid::load(path, &encoding)?;
         Ok(GamePlayState::from_grid(grid))
     }
 
     pub fn new_empty() -> GamePlayState {
         let mut state = GamePlayState::new();
         let grid = ByteGrid::new();
-        state.player = GamePlayState::get_start(&grid);
+        state.player = PlayerPos::Pos(GamePlayState::get_start(&grid));
         state.pages.insert(DEFAULT_PAGE, PageState::from_grid(grid));
         if let Some(page) = &mut state.pages.get_mut(&DEFAULT_PAGE) {
             if let PlayerPos::Pos(p) = &state.player {
                 page.memory[*p] = 0;
             }
         }
-        state.cpu[0].set_register(RegisterId::Page, DEFAULT_PAGE);
+        state.set_initial_page(DEFAULT_PAGE);
         state
     }
 
@@ -227,6 +266,11 @@ impl GamePlayState {
             return Ok(LevelFormat::Folder);
         }
         if path.is_file() {
+            if let Some(ext) = path.extension() {
+                if ext == ".storage" {
+                    return Ok(LevelFormat::RBStorage);
+                }
+            }
             return Ok(LevelFormat::SingleGrid);
         }
         return Err(::std::io::Error::new(
@@ -235,24 +279,113 @@ impl GamePlayState {
         ));
     }
 
-    /*pub fn load_from_path(path: &Path) -> std::io::Result<GamePlayState> {
-    
-    }*/
+    pub fn load_from_folder(path: &Path) -> std::io::Result<GamePlayState> {
+        //let docs = ::yaml_rust::YamlLoader::
+        let config_path = path.join("config.yaml");
+        let level_config = if config_path.exists() {
+            LevelConfig::load(&config_path.to_path_buf())?
+        } else {
+            LevelConfig::new()
+        };
+        let encoding = Encoding::get_encoding(&level_config.encoding)?;
+        let mut game_state = GamePlayState::new();
+        game_state.game_rules = level_config.rules;
 
-    pub fn accessible(&self, p: u8) -> bool {
-        return (p & self.player_bit) == 0;
+        //pages in yaml
+        for page_config in &level_config.page_descr {
+            let file_name = if let Some(name) = &page_config.file_name {
+                name.clone()
+            } else {
+                let name = format!("{}.pdiff", page_config.id);
+                if path.join(&name).exists() {
+                    name
+                } else {
+                    format!("{}.txt", page_config.id)
+                }
+            };
+            //TODO: finish implementing pdiff support
+            let byte_grid = ByteGrid::load(&path.join(file_name), &encoding)?;
+            let mut page_state = PageState::from_grid(byte_grid);
+            for trigger in &page_config.extra_triggers {
+                page_state.triggers.insert(
+                    joinu8(trigger.pos.x as u8, trigger.pos.y as u8),
+                    trigger.clone(),
+                );
+            }
+            game_state.pages.insert(page_config.id, page_state);
+        }
+
+        // rest of the pages named number.txt
+        for file in path.iter() {
+            let path = path.join(file);
+            if !path.is_file() {
+                continue;
+            }
+            let name = file.to_str().unwrap_or("not");
+            if let Ok(number) = name.parse::<u8>() {
+                if !game_state.pages.contains_key(&number) {
+                    let byte_grid = ByteGrid::load(&path, &encoding)?;
+                    game_state
+                        .pages
+                        .insert(number, PageState::from_grid(byte_grid));
+                }
+            }
+        }
+
+        if let Some(page_id) = level_config.initial_page {
+            game_state.set_initial_page(page_id);
+        } else if game_state.pages.len() == 1 {
+            if let Some(id) = game_state.pages.keys().next() {
+                game_state.set_initial_page(*id);
+            } else {
+                game_state.set_initial_page(DEFAULT_PAGE);
+            }
+        } else {
+            game_state.set_initial_page(DEFAULT_PAGE);
+        }
+
+        let initial_pos = if let Some(pos) = level_config.initial_pos {
+            pos
+        } else {
+            GamePlayState::get_start(&game_state.current_page().memory)
+        };
+        game_state.player = PlayerPos::Pos(initial_pos);
+        let player_mask = game_state.player_mask();
+        if let Some(page) = game_state.pages.get_mut(&game_state.player_page) {
+            if page.memory[initial_pos] == player_mask {
+                page.memory[initial_pos] = 0;
+            }
+        }
+
+        Ok(game_state)
     }
 
-    pub fn current_page(&self) -> Option<&PageState> {
-        let page_id = self.cpu[0].get_register(RegisterId::Page).value;
-        self.pages.get(&page_id)
+    pub fn load_from_path(path: &Path) -> std::io::Result<GamePlayState> {
+        let level_format = GamePlayState::detect_level_format(path)?;
+
+        match level_format {
+            LevelFormat::SingleGrid => GamePlayState::single_from_path(path),
+            LevelFormat::Folder => GamePlayState::load_from_folder(path),
+            LevelFormat::RBStorage => {
+                unimplemented!();
+            }
+        }
+    }
+
+    pub fn accessible(&self, p: u8) -> bool {
+        return (p & (self.player_mask())) == 0;
+    }
+
+    pub fn current_page(&self) -> &PageState {
+        let page_id = self.player_page;
+        self.pages.get(&page_id).unwrap_or(&self.null_page)
     }
 
     pub fn effective_value(&self, page: &PageState, p: V2) -> u8 {
         let v = page.memory[p];
         if self.player == PlayerPos::Pos(p) {
             let v = page.memory[p];
-            v | self.player_bit
+            v | self.player_mask()
         } else {
             v
         }
@@ -260,7 +393,7 @@ impl GamePlayState {
 
     pub fn move_player(&mut self, dir: MoveDir) {
         self.cpu[0].get_register(RegisterId::Page);
-        let current_page = self.current_page().unwrap();
+        let current_page = self.current_page();
         match self.player {
             PlayerPos::Pos(v) => {
                 let target = step(v, dir, self.game_rules.wrap_mode);
@@ -273,6 +406,57 @@ impl GamePlayState {
             }
         }
         //TODO:trigers
+    }
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+struct PageDescr {
+    #[serde(default)]
+    extra_triggers: Vec<Trigger>,
+    id: u8,
+    base_name: Option<String>,
+    file_name: Option<String>,
+}
+
+#[derive(Serialize, Deserialize)]
+struct LevelConfig {
+    #[serde(default)]
+    initial_page: Option<u8>,
+    #[serde(default)]
+    initial_pos: Option<V2>,
+    #[serde(default)]
+    rules: GameRules,
+    #[serde(default = "LevelConfig::default_encoding")]
+    encoding: String,
+    #[serde(default)]
+    page_descr: Vec<PageDescr>,
+}
+
+impl LevelConfig {
+    fn new() -> LevelConfig {
+        LevelConfig {
+            initial_page: None,
+            initial_pos: None,
+            rules: GameRules::new(),
+            encoding: "437".to_owned(),
+            page_descr: Vec::new(),
+        }
+    }
+
+    fn default_encoding() -> String {
+        "437".to_owned()
+    }
+
+    fn load(path: &Path) -> std::io::Result<LevelConfig> {
+        let file = std::fs::File::open(path)?;
+        let y: serde_yaml::Result<LevelConfig> = ::serde_yaml::from_reader(file);
+        match y {
+            Ok(res) => Ok(res),
+            Err(e) => {
+                eprintln!("Level loading error: {}", e);
+                Err(Error::new(ErrorKind::InvalidData, e))
+            }
+        }
     }
 }
 
@@ -411,7 +595,7 @@ mod tests {
     #[test]
     fn effective_value() {
         let st = GamePlayState::new_empty();
-        let current_page = st.current_page().unwrap();
+        let current_page = st.current_page();
         let v = st.effective_value(current_page, V2::make(0, 0));
         assert_eq!(v, b'@');
         let v = st.effective_value(current_page, V2::make(0, 1));
