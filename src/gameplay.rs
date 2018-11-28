@@ -9,12 +9,12 @@ use vecmath::*;
 const GRID_MAX: u8 = 0xff;
 const PLAYER_VAL: u8 = b'@';
 const PLAYER_OFFSET: usize = 6;
-const DEFAULT_PAGE: u8 = 42;
+const DEFAULT_PAGE: u8 = 0x42;
 
 #[derive(Debug, PartialEq, Eq, Copy, Clone)]
 pub enum PlayerPos {
     Pos(V2),
-    Register(i32),
+    Register(RegisterId),
 }
 
 #[derive(Serialize, Deserialize, Copy, Clone)]
@@ -23,7 +23,7 @@ enum TriggerKind {
 }
 
 #[derive(Serialize, Deserialize, Clone)]
-struct Trigger {
+pub struct Trigger {
     pos: V2,
     effect: TriggerKind,
     #[serde(default = "trigger_default_one_time")]
@@ -40,13 +40,23 @@ fn trigger_default_one_time() -> bool {
     true
 }
 
+impl Trigger {
+    pub fn is_active(&self) -> bool {
+        !self.triggered || !self.one_time
+    }
+}
+
 pub struct PageState {
     pub memory: ByteGrid,
-    triggers: HashMap<u16, Trigger>,
+    pub triggers: HashMap<u16, Trigger>,
 }
 
 fn joinu8(x: u8, y: u8) -> u16 {
     ((x as u16) << 8) + y as u16
+}
+
+pub fn joinu16(p: V2) -> u16 {
+    joinu8(p.x as u8, p.y as u8)
 }
 
 fn splitu16(p: u16) -> V2 {
@@ -93,6 +103,8 @@ impl PageState {
                         triggered: false,
                     },
                 );
+            } else {
+                break;
             }
             trigger_offset += 1;
         }
@@ -118,7 +130,7 @@ pub struct GamePlayState {
     pub player: PlayerPos,
     pub player_page: u8,
     pub player_offset: u8,
-    pages: HashMap<u8, PageState>,
+    pub pages: HashMap<u8, PageState>,
     pub cpu: Vec<CPU>,
     game_rules: GameRules,
     null_page: PageState,
@@ -391,6 +403,30 @@ impl GamePlayState {
         }
     }
 
+    pub fn apply_triggers(&mut self) {
+        if let PlayerPos::Pos(pos) = self.player {
+            let effect = if let Some(page) = self.pages.get_mut(&self.player_page) {
+                //TODO: what happens when player is in inactive page
+                if let Some(trigger) = page.triggers.get_mut(&joinu16(pos)) {
+                    if !trigger.is_active() {
+                        return;
+                    }
+                    trigger.triggered = true;
+                    trigger.effect
+                } else {
+                    return;
+                }
+            } else {
+                return;
+            };
+            match effect {
+                TriggerKind::SetPC(new_pc) => {
+                    self.cpu[0].pc = new_pc;
+                }
+            }
+        };
+    }
+
     pub fn move_player(&mut self, dir: MoveDir) {
         self.cpu[0].get_register(RegisterId::Page);
         let current_page = self.current_page();
@@ -405,7 +441,120 @@ impl GamePlayState {
                 //TODO:implement register move
             }
         }
-        //TODO:trigers
+        self.apply_triggers();
+        if self.player_page == self.cpu[0].get_register(RegisterId::Page).value {
+            self.step_cpu(0);
+        }
+    }
+
+    fn step_cpu(&mut self, id: usize) {
+        let player_mask = self.player_mask();
+        let cpu = &mut self.cpu[id];
+        let page_id = cpu.get_register_effective(RegisterId::Page, self.player, player_mask);
+        let pc = cpu.pc;
+        let instr = self.read_instruction(pc, page_id);
+        let cpu = &mut self.cpu[id];
+        cpu.pc = pc.checked_add(1).unwrap_or(pc);
+        let compare_value =
+            cpu.get_register_effective(RegisterId::Compare, self.player, player_mask);
+        match instr {
+            Instruction::Swap(pos) => {
+                let v = cpu.get_register(RegisterId::Data).value;
+                if let Some(page) = self.pages.get_mut(&page_id) {
+                    cpu.set_register(RegisterId::Data, page.memory[pos]);
+                    page.memory[pos] = v;
+                    if self.player_page == page_id && self.player == PlayerPos::Pos(splitu16(pos)) {
+                        self.player = PlayerPos::Register(RegisterId::Data)
+                    } else if self.player == PlayerPos::Register(RegisterId::Data) {
+                        self.player = PlayerPos::Pos(splitu16(pos));
+                        self.player_page = page_id;
+                    }
+                }
+            }
+            Instruction::Jump(target) => {
+                cpu.pc = target;
+            }
+            Instruction::JumpEqual(target) => {
+                if compare_value == 0 {
+                    cpu.pc = target;
+                }
+            }
+            Instruction::JumpGreater(target) => {
+                if compare_value == 1 {
+                    cpu.pc = target;
+                }
+            }
+            Instruction::JumpLess(target) => {
+                if compare_value > 1 {
+                    cpu.pc = target;
+                }
+            }
+            Instruction::Compare(v) => {
+                let data = cpu.get_register_effective(RegisterId::Data, self.player, player_mask);
+                cpu.set_register(
+                    RegisterId::Compare,
+                    if data > v {
+                        1
+                    } else if data < v {
+                        !0
+                    } else {
+                        0
+                    },
+                );
+            }
+            Instruction::Page(v) => {
+                unimplemented!();
+            }
+            Instruction::Add(v) => {
+                let data = cpu.get_register_effective(RegisterId::Data, self.player, player_mask);
+                //TODO: check how player bit gets handled
+                cpu.set_register(RegisterId::Data, data.wrapping_add(v));
+            }
+            Instruction::None => {
+                cpu.pc = pc;
+            }
+        }
+    }
+
+    fn read_instruction(&self, pc: u16, page_id: u8) -> Instruction {
+        let page = self.pages.get(&page_id).unwrap_or(&self.null_page);
+        let p = splitu16(pc);
+        let instr = self.effective_value(page, p);
+        let arg_u8 = || {
+            let a0 = p + V2::make(1, 0);
+            if a0.x < 256 {
+                self.effective_value(page, a0)
+            } else {
+                0
+            }
+        };
+        let arg_u16 = || {
+            let a0 = p + V2::make(1, 0);
+            if a0.x < 256 {
+                let high = self.effective_value(page, a0);
+                let a1 = a0 + V2::make(1, 0);
+                let low = if a1.x < 256 {
+                    self.effective_value(page, a1)
+                } else {
+                    0
+                };
+                ((high as u16) << 8) | (low as u16)
+            } else {
+                0
+            }
+        };
+
+        match instr {
+            b'j' => Instruction::Jump(arg_u16()),
+            b's' => Instruction::Swap(arg_u16()),
+            b'c' => Instruction::Compare(arg_u8()),
+            b'e' => Instruction::JumpEqual(arg_u16()),
+            b'l' => Instruction::JumpLess(arg_u16()),
+            b'g' => Instruction::JumpGreater(arg_u16()),
+            b'a' => Instruction::Add(arg_u8()),
+            b'p' => Instruction::Page(arg_u8()),
+            _ => Instruction::None,
+        }
     }
 }
 
@@ -460,15 +609,28 @@ impl LevelConfig {
     }
 }
 
+enum Instruction {
+    Swap(u16),
+    Jump(u16),
+    Compare(u8),
+    JumpEqual(u16),
+    JumpLess(u16),
+    JumpGreater(u16),
+    Add(u8),
+    Page(u8),
+    None,
+}
+
+#[derive(Debug, PartialEq, Eq, Copy, Clone)]
 pub enum RegisterId {
     Data = 0,
     Page = 1,
     Compare = 2,
-    PC = 3,
 }
 
 pub struct CPU {
     registers: Vec<Register>,
+    pub pc: u16,
 }
 
 pub struct Register {
@@ -480,6 +642,7 @@ pub struct Register {
 impl CPU {
     pub fn new() -> CPU {
         CPU {
+            pc: 0,
             registers: vec![
                 Register {
                     value: 0,
@@ -496,11 +659,6 @@ impl CPU {
                     protected: false,
                     name: "compare".to_owned(),
                 },
-                Register {
-                    value: 0,
-                    protected: true,
-                    name: "PC".to_owned(),
-                },
             ],
         }
     }
@@ -509,6 +667,18 @@ impl CPU {
     }
     pub fn set_register(&mut self, id: RegisterId, value: u8) {
         self.registers[id as usize].value = value;
+    }
+    pub fn get_register_effective(
+        &self,
+        id: RegisterId,
+        player_pos: PlayerPos,
+        player_mask: u8,
+    ) -> u8 {
+        let v = self.registers[id as usize].value;
+        match player_pos {
+            PlayerPos::Register(r) if r == id => (v | player_mask),
+            _ => v,
+        }
     }
 }
 
@@ -602,5 +772,60 @@ mod tests {
         assert_eq!(v, 0u8);
 
         //TODO: add combination with other bytes
+    }
+
+    #[test]
+    fn trigger() {
+        let grid = ByteGrid::from_str("@");
+        let mut game = GamePlayState::from_grid(grid);
+        game.pages.get_mut(&DEFAULT_PAGE).map(|page| {
+            page.triggers.insert(
+                0x0100,
+                Trigger {
+                    pos: V2::make(1, 0),
+                    effect: TriggerKind::SetPC(0x1010),
+                    triggered: false,
+                    one_time: true,
+                },
+            );
+            page.triggers.insert(
+                0x0200,
+                Trigger {
+                    pos: V2::make(2, 0),
+                    effect: TriggerKind::SetPC(0x1110),
+                    triggered: false,
+                    one_time: false,
+                },
+            );
+            page.triggers.insert(
+                0x0300,
+                Trigger {
+                    pos: V2::make(3, 0),
+                    effect: TriggerKind::SetPC(0x1210),
+                    triggered: false,
+                    one_time: true,
+                },
+            );
+        });
+
+        assert_eq!(game.cpu[0].pc, 0);
+        {
+            let trigger = game.current_page().triggers.get(&0x100).unwrap();
+            assert_eq!(trigger.is_active(), true);
+        }
+        game.move_player(MoveDir::Right);
+        assert_eq!(game.cpu[0].pc, 0x1010);
+        {
+            let trigger = game.current_page().triggers.get(&0x100).unwrap();
+            assert_eq!(trigger.is_active(), false);
+        }
+        game.move_player(MoveDir::Right);
+        assert_eq!(game.cpu[0].pc, 0x1110);
+        game.move_player(MoveDir::Right);
+        assert_eq!(game.cpu[0].pc, 0x1210);
+        game.move_player(MoveDir::Left);
+        assert_eq!(game.cpu[0].pc, 0x1110);
+        game.move_player(MoveDir::Left);
+        assert_eq!(game.cpu[0].pc, 0x1110);
     }
 }

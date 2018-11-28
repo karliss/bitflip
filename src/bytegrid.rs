@@ -1,7 +1,7 @@
 use std::fs::File;
-use std::io::prelude::*;
-use std::io::BufReader;
 use std::io::{Error, ErrorKind};
+use std::io::BufReader;
+use std::io::prelude::*;
 use std::ops::{Index, IndexMut};
 use std::path::Path;
 
@@ -10,31 +10,33 @@ use vecmath::V2;
 
 const N: usize = 256;
 
+pub type ByteGrid = Grid<u8>;
+
 #[derive(Clone)]
-pub struct ByteGrid {
-    data: Box<[[u8; N]; N]>,
+pub struct Grid<T> {
+    data: Box<[[T; N]; N]>,
 }
 
-impl PartialEq for ByteGrid {
-    fn eq(&self, other: &ByteGrid) -> bool {
+impl<T: PartialEq> PartialEq for Grid<T> {
+    fn eq(&self, other: &Grid<T>) -> bool {
         self.data
             .iter()
             .zip(other.data.iter())
             .all(|(a, b)| a.iter().eq(b.iter()))
     }
 }
-impl Eq for ByteGrid {}
+impl<T: Eq> Eq for Grid<T> {}
 
-impl ByteGrid {
-    pub fn new() -> ByteGrid {
-        ByteGrid {
+impl Grid<u8> {
+    pub fn new() -> Grid<u8> {
+        Grid {
             data: Box::new([[0u8; N]; N]),
         }
     }
 
     //TODO: pub fn load_raw newlines?
 
-    pub fn load(path: &Path, encoding: &Encoding) -> Result<ByteGrid, Error> {
+    pub fn load(path: &Path, encoding: &Encoding) -> Result<Grid<u8>, Error> {
         let mut result = ByteGrid::new();
         let reader = BufReader::new(File::open(&path)?);
         for (i, line) in reader.lines().enumerate() {
@@ -47,6 +49,25 @@ impl ByteGrid {
         }
 
         Ok(result)
+    }
+
+    pub fn from_str(data: &str) -> Grid<u8> {
+        let mut result = ByteGrid::new();
+        let mut px = 0usize;
+        let mut py = 0usize;
+        for c in data.chars() {
+            if c == '\n' {
+                px = 0;
+                py += 1;
+            } else {
+                result
+                    .data
+                    .get_mut(py)
+                    .map(|row| row.get_mut(px).map(|cell| *cell = c as u8));
+                px += 1;
+            }
+        }
+        result
     }
 
     pub fn save(&self, out: &mut ::std::io::Write, encoding: &Encoding) -> Result<(), Error> {
@@ -76,7 +97,7 @@ impl ByteGrid {
         Ok(())
     }
 
-    pub fn diff(&self, after: &ByteGrid) -> ByteGridDiff {
+    pub fn diff(&self, after: &Grid<u8>) -> ByteGridDiff {
         let mut result = ByteGridDiff::new();
         for i in 0u16..=::std::u16::MAX {
             if self[i] != after[i] {
@@ -273,5 +294,17 @@ mod tests {
             c.patch(&deseriaized);
             assert!(c == b);
         }
+    }
+
+    #[test]
+    fn from_str() {
+        let test_data = ByteGrid::from_str("aa\nbbb");
+        debug_assert_eq!(test_data[(0, 0)], b'a');
+        debug_assert_eq!(test_data[(1, 0)], b'a');
+        debug_assert_eq!(test_data[(2, 0)], 0u8);
+        debug_assert_eq!(test_data[(0, 1)], b'b');
+        debug_assert_eq!(test_data[(2, 1)], b'b');
+        debug_assert_eq!(test_data[(3, 1)], 0u8);
+        debug_assert_eq!(test_data[(0, 2)], 0u8);
     }
 }

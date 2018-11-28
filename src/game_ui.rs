@@ -568,12 +568,26 @@ impl DataWidget<(&GamePlayState, V2)> for TextView {
                         let is_player_pos = data.player == PlayerPos::Pos(pos);
                         let c = self.encoding.byte_to_char[byte as usize];
                         let str = c.encode_utf8(&mut buf);
+
+                        let has_trigger =
+                            if let Some(trig) = data.current_page().triggers.get(&joinu16(pos)) {
+                                trig.is_active()
+                            } else {
+                                false
+                            };
+
                         if is_player_pos {
                             write!(ui.raw_out, "{}", color::Fg(color::Yellow))?;
+                        }
+                        if has_trigger {
+                            write!(ui.raw_out, "{}", color::Bg(color::LightBlue))?;
                         }
                         ui.raw_out.write_all(str.as_bytes())?;
                         if is_player_pos {
                             write!(ui.raw_out, "{}", color::Fg(color::Reset))?;
+                        }
+                        if has_trigger {
+                            write!(ui.raw_out, "{}", color::Bg(color::Reset))?;
                         }
                     }
                 }
