@@ -14,7 +14,13 @@ const DEFAULT_PAGE: u8 = 0x42;
 #[derive(Debug, PartialEq, Eq, Copy, Clone)]
 pub enum PlayerPos {
     Pos(V2),
-    Register(RegisterId),
+    Register(usize),
+}
+
+impl PlayerPos {
+    fn from_reg(reg: RegisterId) -> PlayerPos {
+        return PlayerPos::Register(reg as usize);
+    }
 }
 
 #[derive(Serialize, Deserialize, Copy, Clone)]
@@ -51,7 +57,7 @@ pub struct PageState {
     pub triggers: HashMap<u16, Trigger>,
 }
 
-fn joinu8(x: u8, y: u8) -> u16 {
+pub fn joinu8(x: u8, y: u8) -> u16 {
     ((x as u16) << 8) + y as u16
 }
 
@@ -59,7 +65,7 @@ pub fn joinu16(p: V2) -> u16 {
     joinu8(p.x as u8, p.y as u8)
 }
 
-fn splitu16(p: u16) -> V2 {
+pub fn splitu16(p: u16) -> V2 {
     V2 {
         x: (p >> 8) as i32,
         y: (p & 0xff) as i32,
@@ -437,7 +443,7 @@ impl GamePlayState {
                     self.player = PlayerPos::Pos(target);
                 }
             }
-            PlayerPos::Register(r) => {
+            PlayerPos::Register(_r) => {
                 //TODO:implement register move
             }
         }
@@ -450,13 +456,13 @@ impl GamePlayState {
     fn step_cpu(&mut self, id: usize) {
         let player_mask = self.player_mask();
         let cpu = &mut self.cpu[id];
-        let page_id = cpu.get_register_effective(RegisterId::Page, self.player, player_mask);
+        let page_id = cpu.get_register_effective_r(RegisterId::Page, self.player, player_mask);
         let pc = cpu.pc;
         let instr = self.read_instruction(pc, page_id);
         let cpu = &mut self.cpu[id];
         cpu.pc = pc.checked_add(1).unwrap_or(pc);
         let compare_value =
-            cpu.get_register_effective(RegisterId::Compare, self.player, player_mask);
+            cpu.get_register_effective_r(RegisterId::Compare, self.player, player_mask);
         match instr {
             Instruction::Swap(pos) => {
                 let v = cpu.get_register(RegisterId::Data).value;
@@ -464,8 +470,8 @@ impl GamePlayState {
                     cpu.set_register(RegisterId::Data, page.memory[pos]);
                     page.memory[pos] = v;
                     if self.player_page == page_id && self.player == PlayerPos::Pos(splitu16(pos)) {
-                        self.player = PlayerPos::Register(RegisterId::Data)
-                    } else if self.player == PlayerPos::Register(RegisterId::Data) {
+                        self.player = PlayerPos::Register(RegisterId::Data as usize)
+                    } else if self.player == PlayerPos::Register(RegisterId::Data as usize) {
                         self.player = PlayerPos::Pos(splitu16(pos));
                         self.player_page = page_id;
                     }
@@ -490,7 +496,7 @@ impl GamePlayState {
                 }
             }
             Instruction::Compare(v) => {
-                let data = cpu.get_register_effective(RegisterId::Data, self.player, player_mask);
+                let data = cpu.get_register_effective_r(RegisterId::Data, self.player, player_mask);
                 cpu.set_register(
                     RegisterId::Compare,
                     if data > v {
@@ -502,11 +508,11 @@ impl GamePlayState {
                     },
                 );
             }
-            Instruction::Page(v) => {
-                unimplemented!();
+            Instruction::Page(_v) => {
+                unimplemented!(); //TODO: implement page instruction
             }
             Instruction::Add(v) => {
-                let data = cpu.get_register_effective(RegisterId::Data, self.player, player_mask);
+                let data = cpu.get_register_effective_r(RegisterId::Data, self.player, player_mask);
                 //TODO: check how player bit gets handled
                 cpu.set_register(RegisterId::Data, data.wrapping_add(v));
             }
@@ -516,7 +522,29 @@ impl GamePlayState {
         }
     }
 
-    fn read_instruction(&self, pc: u16, page_id: u8) -> Instruction {
+    pub fn instruction_range(&self, pc: u16) -> Option<(u8, u8)> {
+        let pc_v = splitu16(pc);
+        if self.read_instruction(pc, self.player_page) == Instruction::None {
+            return None;
+        }
+        let mut top = pc_v.y;
+        while top > 0
+            && self.read_instruction(joinu16(V2::make(pc_v.x, top - 1)), self.player_page)
+                != Instruction::None
+        {
+            top -= 1;
+        }
+        let mut bottom = pc_v.y;
+        while bottom < 255
+            && self.read_instruction(joinu16(V2::make(pc_v.x, bottom + 1)), self.player_page)
+                != Instruction::None
+        {
+            bottom += 1;
+        }
+        Some((top as u8, bottom as u8))
+    }
+
+    pub fn read_instruction(&self, pc: u16, page_id: u8) -> Instruction {
         let page = self.pages.get(&page_id).unwrap_or(&self.null_page);
         let p = splitu16(pc);
         let instr = self.effective_value(page, p);
@@ -609,7 +637,8 @@ impl LevelConfig {
     }
 }
 
-enum Instruction {
+#[derive(PartialEq, Eq)]
+pub enum Instruction {
     Swap(u16),
     Jump(u16),
     Compare(u8),
@@ -629,7 +658,7 @@ pub enum RegisterId {
 }
 
 pub struct CPU {
-    registers: Vec<Register>,
+    pub registers: Vec<Register>,
     pub pc: u16,
 }
 
@@ -668,17 +697,22 @@ impl CPU {
     pub fn set_register(&mut self, id: RegisterId, value: u8) {
         self.registers[id as usize].value = value;
     }
-    pub fn get_register_effective(
+
+    pub fn get_register_effective(&self, id: usize, player_pos: PlayerPos, player_mask: u8) -> u8 {
+        let v = self.registers[id].value;
+        match player_pos {
+            PlayerPos::Register(r) if r == id => (v | player_mask),
+            _ => v,
+        }
+    }
+
+    pub fn get_register_effective_r(
         &self,
         id: RegisterId,
         player_pos: PlayerPos,
         player_mask: u8,
     ) -> u8 {
-        let v = self.registers[id as usize].value;
-        match player_pos {
-            PlayerPos::Register(r) if r == id => (v | player_mask),
-            _ => v,
-        }
+        self.get_register_effective(id as usize, player_pos, player_mask)
     }
 }
 

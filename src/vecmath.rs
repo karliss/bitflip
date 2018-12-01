@@ -75,6 +75,14 @@ impl Rectangle {
             size: self.size + V2::make(2 * size, 2 * size),
         }
     }
+
+    pub fn width(&self) -> i32 {
+        self.size.x
+    }
+
+    pub fn height(&self) -> i32 {
+        self.size.y
+    }
 }
 
 #[cfg(test)]

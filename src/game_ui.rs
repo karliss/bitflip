@@ -133,6 +133,7 @@ pub struct GamePlayUI {
     panel_sizes: [Rectangle; PanelType::Last as usize],
     byte_view: ByteView,
     text_view: TextView,
+    cpu_view: CpuView,
     last_pos: V2,
     need_clean: i32,
     show_encoding: bool,
@@ -152,6 +153,7 @@ impl GamePlayUI {
             need_clean: 0,
             show_encoding: false,
             encoding_view: EncodingTable::new(ui, Encoding::get_encoding("437").unwrap()), //TODO get rid of unwrap
+            cpu_view: CpuView::new(ui),
         }
     }
 
@@ -283,6 +285,7 @@ impl UiWidget for GamePlayUI {
                 .print_data(ui, (&self.game, self.player_print_pos()))?;
             self.text_view
                 .print_data(ui, (&self.game, self.player_print_pos()))?;
+            self.cpu_view.print_data(ui, &self.game)?;
         }
         ui.raw_out.flush()?;
         Ok(())
@@ -334,7 +337,12 @@ impl UiWidget for GamePlayUI {
     }
 
     fn child_widgets(&self) -> Vec<&UiWidget> {
-        vec![&self.byte_view, &self.text_view, &self.encoding_view]
+        vec![
+            &self.byte_view,
+            &self.text_view,
+            &self.encoding_view,
+            &self.cpu_view,
+        ]
     }
 
     fn child_widgets_mut(&mut self) -> Vec<&mut UiWidget> {
@@ -342,6 +350,7 @@ impl UiWidget for GamePlayUI {
             &mut self.byte_view,
             &mut self.text_view,
             &mut self.encoding_view,
+            &mut self.cpu_view,
         ]
     }
 
@@ -354,7 +363,7 @@ impl UiWidget for GamePlayUI {
             size: V2::make(self.size.size.x, top_size),
         };
         let bottom_top = self.size.pos + V2::make(0, top_size);
-        let right_size = 10;
+        let right_size = 20;
         let data_width = std::cmp::max(self.size.size.x - right_size - 4, 0);
         let left_width = data_width / 2;
         let middle_width = data_width - left_width;
@@ -374,10 +383,12 @@ impl UiWidget for GamePlayUI {
         self.panel_sizes[PanelType::Text as usize] = text_size;
 
         let right_pos = self.get_panel_size(PanelType::Text).top_right() + V2::make(2, 0);
-        self.panel_sizes[PanelType::Right as usize] = Rectangle {
+        let cpu_size = Rectangle {
             pos: right_pos,
             size: V2::make(right_size, bottom_size),
         };
+        self.panel_sizes[PanelType::Right as usize] = cpu_size;
+        self.cpu_view.resize(&cpu_size);
         self.need_clean = 2;
 
         if let Some(popup) = self.get_popup_mut() {
@@ -426,6 +437,32 @@ impl ByteView {
     }
 }
 
+fn print_byte_as_bits(
+    ui: &mut UiContext,
+    byte: u8,
+    player_pos: Option<u8>,
+    player_mask: u8,
+) -> std::io::Result<()> {
+    if let Some(player_offset) = player_pos {
+        let left_part_size = (8 - player_offset - 1) as usize;
+        let left_part = byte >> (8 - left_part_size);
+        let right_part = byte & (player_mask - 1);
+        let right_part_size = player_offset as usize;
+        write!(
+            ui.raw_out,
+            "{color_back}{left_part:0>left_width$b}{color_bit}1{color_back}{right_part:0>right_width$b}",
+            color_back=color::Fg(color::Reset),
+            left_part=left_part,
+            left_width = left_part_size,
+            color_bit=color::Fg(color::Yellow),
+            right_part=right_part,
+            right_width = right_part_size
+        )
+    } else {
+        write!(ui.raw_out, "{:08b}", byte)
+    }
+}
+
 impl DataWidget<(&GamePlayState, V2)> for ByteView {
     fn print_data(
         &mut self,
@@ -459,31 +496,24 @@ impl DataWidget<(&GamePlayState, V2)> for ByteView {
                         let is_player_pos = data.player == PlayerPos::Pos(pos);
                         if !is_player_pos {
                             if data.accessible(byte) {
-                                write!(ui.raw_out, "{}", color::Fg(color::LightWhite))?;
+                                write!(ui.raw_out, "{}", color::Fg(color::Reset))?;
                             } else {
                                 write!(ui.raw_out, "{}", color::Fg(color::Cyan))?;
                             }
                         }
                         match self.mode {
                             ByteViewMode::Bits => {
-                                if is_player_pos {
-                                    let left_part_size = 8 - data.player_offset - 1;
-                                    let left_part = byte >> (8 - left_part_size);
-                                    let right_part = byte & (data.player_mask() - 1);
-                                    let right_part_size = data.player_offset;
-                                    write!(
-                                        ui.raw_out,
-                                        "{color_back}{left_part:0>left_width$b}{color_bit}1{color_back}{right_part:0>right_width$b}",
-                                        color_back=color::Fg(color::LightWhite),
-                                        left_part=left_part,
-                                        left_width = left_part_size.into(),
-                                        color_bit=color::Fg(color::Yellow),
-                                        right_part=right_part,
-                                        right_width = right_part_size.into()
-                                    )?;
+                                let maybe_player_offset = if is_player_pos {
+                                    Some(data.player_offset)
                                 } else {
-                                    write!(ui.raw_out, "{:08b}", byte)?;
-                                }
+                                    None
+                                };
+                                print_byte_as_bits(
+                                    ui,
+                                    byte,
+                                    maybe_player_offset,
+                                    data.player_mask(),
+                                )?;
                             }
                             ByteViewMode::Hex => {
                                 if is_player_pos {
@@ -698,8 +728,14 @@ impl UiWidget for EncodingTable {
 
     fn input(&mut self, e: &Event) -> Option<UiEvent> {
         match e {
-            Event::Key(Key::Char('x')) => self.event(UiEventType::Ok),
-            Event::Key(Key::Down) | Event::Key(Key::Right) => {
+            Event::Key(Key::Char('x')) | Event::Key(Key::Char('q')) | Event::Key(Key::Esc) => {
+                self.event(UiEventType::Ok)
+            }
+            Event::Key(Key::Down)
+            | Event::Key(Key::Right)
+            | Event::Key(Key::Char('k'))
+            | Event::Key(Key::Char('l')) => {
+                //TODO: limit scrolling when everything fits
                 if self.offset < 254 {
                     self.offset = std::cmp::min(self.offset + self.rows, 256 - self.rows);
                     if self.offset < 0 {
@@ -709,7 +745,10 @@ impl UiWidget for EncodingTable {
                 self.redraw = true;
                 self.event(UiEventType::Changed)
             }
-            Event::Key(Key::Up) | Event::Key(Key::Left) => {
+            Event::Key(Key::Up)
+            | Event::Key(Key::Left)
+            | Event::Key(Key::Char('h'))
+            | Event::Key(Key::Char('j')) => {
                 if self.offset > 0 {
                     self.offset = std::cmp::max(self.offset - self.rows, 0);
                 }
@@ -761,5 +800,181 @@ impl UiWidget for EncodingTable {
 
     fn get_id(&self) -> UiId {
         self.id
+    }
+}
+
+struct CpuView {
+    id: UiId,
+    size: Rectangle,
+}
+
+impl CpuView {
+    fn new(ui: &mut UiContext) -> CpuView {
+        CpuView {
+            id: ui.next_id(),
+            size: DEFAULT_WINDOW_SIZE,
+        }
+    }
+
+    fn print_instruction(ui: &mut UiContext, instruction: Instruction) -> std::io::Result<()> {
+        let mut arg = 0u16;
+        let mut argw = 0;
+        let mut text = "";
+        match instruction {
+            Instruction::Swap(pos) => {
+                arg = pos;
+                argw = 2;
+                text = "SWAP";
+            }
+            Instruction::Jump(pos) => {
+                arg = pos;
+                argw = 2;
+                text = "JUMP";
+            }
+            Instruction::Compare(v) => {
+                arg = v as u16;
+                argw = 1;
+                text = "CMPR";
+            }
+            Instruction::JumpEqual(pos) => {
+                arg = pos;
+                argw = 2;
+                text = "JE";
+            }
+            Instruction::JumpLess(pos) => {
+                arg = pos;
+                argw = 2;
+                text = "JL";
+            }
+            Instruction::JumpGreater(pos) => {
+                arg = pos;
+                argw = 2;
+                text = "JG";
+            }
+            Instruction::Add(v) => {
+                arg = v as u16;
+                argw = 1;
+                text = "ADD";
+            }
+            Instruction::Page(v) => {
+                arg = v as u16;
+                argw = 1;
+                text = "PAGE";
+            }
+            Instruction::None => {}
+        }
+        match argw {
+            1 => write!(ui.raw_out, "{:4}   {:02x}", text, arg),
+            2 => write!(ui.raw_out, "{:4} {:04x}", text, arg),
+            _ => write!(ui.raw_out, "{:4} {:4}", text, " "),
+        }
+    }
+
+    fn print_registers(
+        &mut self,
+        ui: &mut UiContext,
+        data: &GamePlayState,
+    ) -> std::io::Result<Rectangle> {
+        let mut rows_used = 0;
+        let player_mask = data.player_mask();
+        for (i, r) in data.cpu[0].registers.iter().enumerate() {
+            let effective_value = data.cpu[0].get_register_effective(i, data.player, player_mask);
+            ui.goto(self.size.pos + V2::make(0, i as i32))?;
+            write!(ui.raw_out, "{:<8} {:02x}:", r.name, effective_value)?;
+            if data.player != PlayerPos::Register(i) {
+                print_byte_as_bits(ui, effective_value, None, player_mask)?;
+            } else {
+                print_byte_as_bits(ui, effective_value, Some(data.player_offset), player_mask)?;
+            }
+            rows_used += 1;
+        }
+        Ok(Rectangle {
+            pos: self.size.pos + V2::make(0, rows_used),
+            size: V2::make(
+                self.size.width(),
+                std::cmp::max(0, self.size.height() - rows_used),
+            ),
+        })
+    }
+}
+
+impl UiWidget for CpuView {
+    fn print(&mut self, _ui: &mut UiContext) -> std::io::Result<()> {
+        Ok(())
+    }
+
+    fn child_widgets(&self) -> Vec<&UiWidget> {
+        Vec::new()
+    }
+
+    fn child_widgets_mut(&mut self) -> Vec<&mut UiWidget> {
+        Vec::new()
+    }
+
+    fn resize(&mut self, widget_size: &Rectangle) {
+        self.size = *widget_size;
+    }
+
+    fn get_id(&self) -> UiId {
+        self.id
+    }
+}
+
+impl DataWidget<&GamePlayState> for CpuView {
+    fn print_data(&mut self, ui: &mut UiContext, data: &GamePlayState) -> std::io::Result<()> {
+        let space = self.print_registers(ui, data)?;
+        let pc = data.cpu[0].pc;
+        let pc_v = ::gameplay::splitu16(pc);
+        let mut rows_used = 0;
+        if let Some(range) = data.instruction_range(pc) {
+            let (r0, r1) = (range.0 as i32, range.1 as i32);
+            let h = space.size.y;
+            let (top, bottom) = if r1 - r0 + 1 > h {
+                let half = (h - 1) / 2;
+                let mut t = pc_v.y - half;
+                let mut b = pc_v.y + half;
+                if b >= 256 {
+                    t -= b - 255;
+                    b = 255;
+                }
+                if t < r0 {
+                    b += r0 - t;
+                    t = r0;
+                }
+                (t, b)
+            } else {
+                (r0, r1)
+            };
+
+            for row in top..=bottom {
+                let instruction_pc = ::gameplay::joinu8(pc_v.x as u8, row as u8);
+                let instr = data.read_instruction(instruction_pc, data.player_page);
+                ui.goto(space.pos + V2::make(0, row - top))?;
+                write!(
+                    ui.raw_out,
+                    "{}{:04x}{}",
+                    color::Fg(color::Red),
+                    instruction_pc,
+                    color::Fg(color::Reset),
+                )?;
+                if instruction_pc == pc {
+                    write!(
+                        ui.raw_out,
+                        "{} =>{}",
+                        color::Fg(color::Yellow),
+                        color::Fg(color::Reset),
+                    )?;
+                } else {
+                    write!(ui.raw_out, "   ",)?;
+                }
+                CpuView::print_instruction(ui, instr)?;
+                rows_used += 1;
+            }
+        }
+        for i in space.pos.y + rows_used..space.pos.y + space.size.y {
+            ui.goto(V2::make(space.pos.x, i))?;
+            write!(ui.raw_out, "{0: >1$}", " ", space.size.x as usize)?;
+        }
+        Ok(())
     }
 }
