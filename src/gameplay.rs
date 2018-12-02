@@ -118,17 +118,30 @@ impl PageState {
     }
 }
 
-#[derive(Serialize, Deserialize, Default)]
+#[derive(Serialize, Deserialize)]
 struct GameRules {
     #[serde(default)]
     wrap_mode: WrapingMode,
+    #[serde(default = "GameRules::default_reset_registers_on_trigger")]
+    reset_registers_on_trigger: bool,
 }
 
 impl GameRules {
     fn new() -> GameRules {
         GameRules {
             wrap_mode: WrapingMode::Block,
+            reset_registers_on_trigger: GameRules::default_reset_registers_on_trigger(),
         }
+    }
+
+    fn default_reset_registers_on_trigger() -> bool {
+        return true;
+    }
+}
+
+impl Default for GameRules {
+    fn default() -> GameRules {
+        GameRules::new()
     }
 }
 
@@ -409,6 +422,11 @@ impl GamePlayState {
         }
     }
 
+    fn reset_registers(&mut self) {
+        self.cpu[0].set_register(RegisterId::Data, 0);
+        self.cpu[0].set_register(RegisterId::Compare, 0xff);
+    }
+
     pub fn apply_triggers(&mut self) {
         if let PlayerPos::Pos(pos) = self.player {
             let effect = if let Some(page) = self.pages.get_mut(&self.player_page) {
@@ -427,6 +445,9 @@ impl GamePlayState {
             };
             match effect {
                 TriggerKind::SetPC(new_pc) => {
+                    if self.game_rules.reset_registers_on_trigger {
+                        self.reset_registers();
+                    }
                     self.cpu[0].pc = new_pc;
                 }
             }
@@ -648,6 +669,22 @@ pub enum Instruction {
     Add(u8),
     Page(u8),
     None,
+}
+
+impl Instruction {
+    pub fn mem_operand(&self) -> Option<u16> {
+        match self {
+            Instruction::Swap(v)
+            | Instruction::Jump(v)
+            | Instruction::JumpEqual(v)
+            | Instruction::JumpLess(v)
+            | Instruction::JumpGreater(v) => Some(*v),
+            Instruction::Compare(_)
+            | Instruction::Add(_)
+            | Instruction::Page(_)
+            | Instruction::None => None,
+        }
+    }
 }
 
 #[derive(Debug, PartialEq, Eq, Copy, Clone)]

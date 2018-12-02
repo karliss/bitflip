@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::io::Write;
 
 use termion::color;
@@ -331,6 +332,9 @@ impl UiWidget for GamePlayUI {
                     ByteViewMode::Bits => ByteViewMode::Hex,
                 };
             }
+            Event::Key(Key::Char('b')) => {
+                self.text_view.show_positions = !self.text_view.show_positions;
+            }
             _ => {}
         }
         return self.event(UiEventType::None);
@@ -562,6 +566,7 @@ struct TextView {
     id: UiId,
     size: Rectangle,
     encoding: Encoding,
+    show_positions: bool,
 }
 
 impl TextView {
@@ -570,7 +575,23 @@ impl TextView {
             id: ui.next_id(),
             size: DEFAULT_WINDOW_SIZE,
             encoding: Encoding::get_encoding("437").unwrap(),
+            show_positions: false,
         }
+    }
+
+    fn get_operand_addresses(&self, data: &GamePlayState) -> HashSet<u16> {
+        let mut result = HashSet::new();
+        let pc_v = splitu16(data.cpu[0].pc);
+        if let Some(instruction_range) = data.instruction_range(data.cpu[0].pc) {
+            for row in instruction_range.0..=instruction_range.1 {
+                let instruction_pc = ::gameplay::joinu8(pc_v.x as u8, row as u8);
+                let instr = data.read_instruction(instruction_pc, data.player_page);
+                if let Some(p) = instr.mem_operand() {
+                    result.insert(p);
+                }
+            }
+        }
+        result
     }
 }
 
@@ -581,6 +602,7 @@ impl DataWidget<(&GamePlayState, V2)> for TextView {
         (data, last_pos): (&GamePlayState, V2),
     ) -> std::io::Result<()> {
         let mut buf = [0u8; 16];
+        let operand_positions = self.get_operand_addresses(data);
         for y in 0..self.size.size.y {
             ui.goto(self.size.pos + V2::make(0, y))?;
             let my = last_pos.y + y - (self.size.size.y / 2);
@@ -605,18 +627,23 @@ impl DataWidget<(&GamePlayState, V2)> for TextView {
                             } else {
                                 false
                             };
+                        let is_marked =
+                            self.show_positions && operand_positions.contains(&joinu16(pos));
 
                         if is_player_pos {
                             write!(ui.raw_out, "{}", color::Fg(color::Yellow))?;
                         }
-                        if has_trigger {
+                        if is_marked {
                             write!(ui.raw_out, "{}", color::Bg(color::LightBlue))?;
+                        }
+                        if has_trigger {
+                            write!(ui.raw_out, "{}", color::Bg(color::LightRed))?;
                         }
                         ui.raw_out.write_all(str.as_bytes())?;
                         if is_player_pos {
                             write!(ui.raw_out, "{}", color::Fg(color::Reset))?;
                         }
-                        if has_trigger {
+                        if has_trigger || is_marked {
                             write!(ui.raw_out, "{}", color::Bg(color::Reset))?;
                         }
                     }
