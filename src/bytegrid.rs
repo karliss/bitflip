@@ -34,8 +34,6 @@ impl Grid<u8> {
         }
     }
 
-    //TODO: pub fn load_raw newlines?
-
     pub fn load(path: &Path, encoding: &Encoding) -> Result<Grid<u8>, Error> {
         let mut result = ByteGrid::new();
         let reader = BufReader::new(File::open(&path)?);
@@ -51,19 +49,19 @@ impl Grid<u8> {
         Ok(result)
     }
 
-    pub fn from_str(data: &str) -> Grid<u8> {
+    pub fn from_raw_str(data: &[u8]) -> Grid<u8> {
         let mut result = ByteGrid::new();
         let mut px = 0usize;
         let mut py = 0usize;
-        for c in data.chars() {
-            if c == '\n' {
+        for c in data {
+            if *c == b'\n' {
                 px = 0;
                 py += 1;
             } else {
                 result
                     .data
                     .get_mut(py)
-                    .map(|row| row.get_mut(px).map(|cell| *cell = c as u8));
+                    .map(|row| row.get_mut(px).map(|cell| *cell = *c));
                 px += 1;
             }
         }
@@ -235,6 +233,47 @@ impl IndexMut<V2> for ByteGrid {
     }
 }
 
+const BITS_IN_BYTE: usize = 8;
+type WordType = u8;
+
+#[derive(Eq, PartialEq, Clone, Debug)]
+pub struct Bits256 {
+    data: [WordType; Bits256::WORD_COUNT],
+}
+
+impl Bits256 {
+    pub const WORD_SIZE: usize = std::mem::size_of::<WordType>() * BITS_IN_BYTE;
+    pub const WORD_COUNT: usize = 256 / Bits256::WORD_SIZE;
+    pub const BIT_COUNT: usize = Bits256::WORD_COUNT * Bits256::WORD_SIZE;
+
+    pub fn new() -> Bits256 {
+        Bits256 {
+            data: [0u8; Bits256::WORD_COUNT],
+        }
+    }
+
+    pub fn set(&mut self, idx: u8, value: bool) {
+        let byte = idx as usize / BITS_IN_BYTE;
+        let bit = (1 as WordType) << (idx as usize % BITS_IN_BYTE);
+        if value {
+            self.data[byte] |= bit;
+        } else {
+            self.data[byte] &= !bit;
+        }
+    }
+
+    pub fn get(&self, idx: u8) -> bool {
+        let byte = idx as usize / BITS_IN_BYTE;
+        (self.data[byte] >> (idx as usize % BITS_IN_BYTE)) & 1 == 1
+    }
+
+    pub fn clear(&mut self) {
+        for v in &mut self.data {
+            *v = 0;
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -298,7 +337,7 @@ mod tests {
 
     #[test]
     fn from_str() {
-        let test_data = ByteGrid::from_str("aa\nbbb");
+        let test_data = ByteGrid::from_raw_str(b"aa\nbbb");
         debug_assert_eq!(test_data[(0, 0)], b'a');
         debug_assert_eq!(test_data[(1, 0)], b'a');
         debug_assert_eq!(test_data[(2, 0)], 0u8);
@@ -306,5 +345,35 @@ mod tests {
         debug_assert_eq!(test_data[(2, 1)], b'b');
         debug_assert_eq!(test_data[(3, 1)], 0u8);
         debug_assert_eq!(test_data[(0, 2)], 0u8);
+    }
+
+    #[test]
+    fn test_bits256() {
+        let mut a = Bits256::new();
+        for i in 0..Bits256::BIT_COUNT {
+            assert_eq!(false, a.get(i as u8));
+        }
+        a.set(0, true);
+        a.set(255, true);
+        a.set(7, true);
+        a.set(8, true);
+        for i in 0..Bits256::BIT_COUNT {
+            assert_eq!(i == 0 || i == 7 || i == 8 || i == 255, a.get(i as u8));
+        }
+        let b = a.clone();
+        a.set(1, false);
+        assert_eq!(true, a.get(0));
+        assert_eq!(b, a);
+        a.set(0, false);
+        assert_eq!(false, a.get(0));
+        assert_eq!(true, a.get(7));
+
+        a.set(21, true);
+        for i in 16u8..24u8 {
+            assert_eq!(i == 21, a.get(i));
+        }
+
+        a.clear();
+        assert_eq!(a, Bits256::new());
     }
 }

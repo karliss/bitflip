@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::io::{Error, ErrorKind};
 use std::path::Path;
 
-use bytegrid::ByteGrid;
+use bytegrid::*;
 use encoding::Encoding;
 use vecmath::*;
 
@@ -118,23 +118,46 @@ impl PageState {
     }
 }
 
+#[derive(Serialize, Deserialize, Eq, PartialEq)]
+enum PageRotationRule {
+    Always,
+    Never,
+    AfterPageInstruction,
+}
+
+impl Default for PageRotationRule {
+    fn default() -> PageRotationRule {
+        PageRotationRule::Always
+    }
+}
+
 #[derive(Serialize, Deserialize)]
 struct GameRules {
     #[serde(default)]
     wrap_mode: WrapingMode,
     #[serde(default = "GameRules::default_reset_registers_on_trigger")]
     reset_registers_on_trigger: bool,
+    #[serde(default = "GameRules::page_instruction_default")]
+    page_instruction: bool,
+    #[serde(default)]
+    rotate_page: PageRotationRule,
 }
 
 impl GameRules {
     fn new() -> GameRules {
         GameRules {
-            wrap_mode: WrapingMode::Block,
+            wrap_mode: WrapingMode::default(),
             reset_registers_on_trigger: GameRules::default_reset_registers_on_trigger(),
+            page_instruction: GameRules::page_instruction_default(),
+            rotate_page: PageRotationRule::default(),
         }
     }
 
     fn default_reset_registers_on_trigger() -> bool {
+        return true;
+    }
+
+    fn page_instruction_default() -> bool {
         return true;
     }
 }
@@ -151,8 +174,10 @@ pub struct GamePlayState {
     pub player_offset: u8,
     pub pages: HashMap<u8, PageState>,
     pub cpu: Vec<CPU>,
+    visited_pages: Bits256,
     game_rules: GameRules,
     null_page: PageState,
+    page_instruction_executed: bool,
 }
 
 #[derive(Debug, PartialEq, Eq, Copy, Clone)]
@@ -161,6 +186,12 @@ pub enum MoveDir {
     Left,
     Down,
     Right,
+}
+
+#[derive(Debug, PartialEq, Eq, Copy, Clone)]
+pub enum PlayerMove {
+    Move(MoveDir),
+    RotatePage,
 }
 
 #[derive(Debug, PartialEq, Eq, Copy, Clone, Serialize, Deserialize)]
@@ -227,6 +258,8 @@ impl GamePlayState {
             cpu: vec![CPU::new()],
             game_rules: GameRules::new(),
             null_page: PageState::new(),
+            visited_pages: Bits256::new(),
+            page_instruction_executed: false,
         }
     }
 
@@ -253,6 +286,8 @@ impl GamePlayState {
     fn set_initial_page(&mut self, page: u8) {
         self.player_page = page;
         self.cpu[0].set_register(RegisterId::Page, page);
+        self.visited_pages.clear();
+        self.visited_pages.set(page, true);
     }
 
     pub fn from_grid(grid: ByteGrid) -> GamePlayState {
@@ -428,6 +463,7 @@ impl GamePlayState {
     }
 
     pub fn apply_triggers(&mut self) {
+        eprintln!("apply triger: {:?}", self.player);
         if let PlayerPos::Pos(pos) = self.player {
             let effect = if let Some(page) = self.pages.get_mut(&self.player_page) {
                 //TODO: what happens when player is in inactive page
@@ -454,7 +490,28 @@ impl GamePlayState {
         };
     }
 
-    pub fn move_player(&mut self, dir: MoveDir) {
+    fn rotate_page(&mut self) -> bool {
+        if !(self.game_rules.rotate_page == PageRotationRule::Always
+            || (self.game_rules.rotate_page == PageRotationRule::AfterPageInstruction
+                && self.page_instruction_executed))
+        {
+            return false;
+        }
+        if let PlayerPos::Pos(_) = self.player {
+        } else {
+            return false; // allow page rotate only in memory
+        }
+        for i in 1u8..=255u8 {
+            let target_page = self.player_page.wrapping_add(i);
+            if self.visited_pages.get(target_page) {
+                self.player_page = target_page;
+                return false;
+            }
+        }
+        false
+    }
+
+    fn move_player(&mut self, dir: MoveDir) -> bool {
         self.cpu[0].get_register(RegisterId::Page);
         let current_page = self.current_page();
         match self.player {
@@ -464,14 +521,47 @@ impl GamePlayState {
                     self.player = PlayerPos::Pos(target);
                 }
             }
-            PlayerPos::Register(_r) => {
-                //TODO:implement register move
+            PlayerPos::Register(r) => {
+                let target = match dir {
+                    MoveDir::Up if r > 0 => r - 1,
+                    MoveDir::Down if r + 1 < self.cpu[0].registers.len() => r + 1,
+                    _ => r,
+                };
+                if !self.accessible(self.cpu[0].get_register_effective(
+                    target,
+                    self.player,
+                    self.player_mask(),
+                )) {
+                    return true;
+                }
+                self.player = PlayerPos::Register(target);
+                self.change_player_page(self.cpu[0].get_register_effective_r(
+                    RegisterId::Page,
+                    self.player,
+                    self.player_mask(),
+                ));
             }
         }
+        true
+    }
+
+    pub fn make_move(&mut self, action: PlayerMove) {
+        let advance_world = match action {
+            PlayerMove::Move(dir) => self.move_player(dir),
+            PlayerMove::RotatePage => self.rotate_page(),
+        };
         self.apply_triggers();
-        if self.player_page == self.cpu[0].get_register(RegisterId::Page).value {
+        if advance_world
+            && self.player_page
+                == self.cpu[0].get_register_effective_r(
+                    RegisterId::Page,
+                    self.player,
+                    self.player_mask(),
+                )
+        {
             self.step_cpu(0);
         }
+        self.visited_pages.set(self.player_page, true);
     }
 
     fn step_cpu(&mut self, id: usize) {
@@ -529,8 +619,11 @@ impl GamePlayState {
                     },
                 );
             }
-            Instruction::Page(_v) => {
-                unimplemented!(); //TODO: implement page instruction
+            Instruction::Page(v) => {
+                if self.game_rules.page_instruction {
+                    self.page_instruction_executed = true;
+                    self.change_cpu_page(id, v);
+                }
             }
             Instruction::Add(v) => {
                 let data = cpu.get_register_effective_r(RegisterId::Data, self.player, player_mask);
@@ -604,6 +697,16 @@ impl GamePlayState {
             b'p' => Instruction::Page(arg_u8()),
             _ => Instruction::None,
         }
+    }
+
+    fn change_player_page(&mut self, page: u8) {
+        self.player_page = page;
+        self.visited_pages.set(page, true);
+    }
+
+    fn change_cpu_page(&mut self, id: usize, page: u8) {
+        self.cpu[id].set_register(RegisterId::Page, page);
+        self.change_player_page(page);
     }
 }
 
@@ -847,7 +950,7 @@ mod tests {
 
     #[test]
     fn trigger() {
-        let grid = ByteGrid::from_str("@");
+        let grid = ByteGrid::from_raw_str(b"@");
         let mut game = GamePlayState::from_grid(grid);
         game.pages.get_mut(&DEFAULT_PAGE).map(|page| {
             page.triggers.insert(
@@ -884,19 +987,99 @@ mod tests {
             let trigger = game.current_page().triggers.get(&0x100).unwrap();
             assert_eq!(trigger.is_active(), true);
         }
-        game.move_player(MoveDir::Right);
+        game.make_move(PlayerMove::Move(MoveDir::Right));
         assert_eq!(game.cpu[0].pc, 0x1010);
         {
             let trigger = game.current_page().triggers.get(&0x100).unwrap();
             assert_eq!(trigger.is_active(), false);
         }
-        game.move_player(MoveDir::Right);
+        game.make_move(PlayerMove::Move(MoveDir::Right));
         assert_eq!(game.cpu[0].pc, 0x1110);
-        game.move_player(MoveDir::Right);
+        game.make_move(PlayerMove::Move(MoveDir::Right));
         assert_eq!(game.cpu[0].pc, 0x1210);
-        game.move_player(MoveDir::Left);
+        game.make_move(PlayerMove::Move(MoveDir::Left));
         assert_eq!(game.cpu[0].pc, 0x1110);
-        game.move_player(MoveDir::Left);
+        game.make_move(PlayerMove::Move(MoveDir::Left));
         assert_eq!(game.cpu[0].pc, 0x1110);
+    }
+
+    #[test]
+    fn page_instruction() {
+        let grid = ByteGrid::from_raw_str(
+            b"@  \x01\n\
+                    s\x00\x00\n\
+                    p\x02\n\
+                    s\x03\x00\n\
+                    \n\
+                    j\x10\x10",
+        );
+        let page2 = ByteGrid::from_raw_str(b"\n\n\ns\x04\x00\n\nj\x00\x06\nj\x00\x05");
+        let mut game = GamePlayState::from_grid(grid);
+        game.pages.insert(0x02, PageState::from_grid(page2));
+
+        game.make_move(PlayerMove::RotatePage);
+        assert_eq!(0x42, game.player_page);
+        game.cpu[0].pc = 0x0001;
+        game.make_move(PlayerMove::Move(MoveDir::Left)); // wait in corner, swap in to data
+        assert_eq!(PlayerPos::Register(RegisterId::Data as usize), game.player);
+        game.make_move(PlayerMove::Move(MoveDir::Down)); // block move to data, p2
+        assert_eq!(0x02, game.player_page);
+        assert_eq!(
+            0x02,
+            game.cpu[0].get_register_effective_r(RegisterId::Page, game.player, game.player_mask())
+        );
+        assert_eq!(PlayerPos::Register(RegisterId::Data as usize), game.player);
+        game.make_move(PlayerMove::Move(MoveDir::Down));
+        assert_eq!(0x42, game.player_page);
+        assert_eq!(
+            0x42,
+            game.cpu[0].get_register_effective_r(RegisterId::Page, game.player, game.player_mask())
+        );
+        assert_eq!(PlayerPos::Register(RegisterId::Page as usize), game.player);
+        assert_eq!(
+            0x01,
+            game.cpu[0].get_register_effective_r(RegisterId::Data, game.player, game.player_mask())
+        );
+        game.make_move(PlayerMove::Move(MoveDir::Up));
+        assert_eq!(0x2, game.player_page);
+        assert_eq!(
+            0x2,
+            game.cpu[0].get_register_effective_r(RegisterId::Page, game.player, game.player_mask())
+        );
+        assert_eq!(PlayerPos::Register(RegisterId::Data as usize), game.player);
+        assert_eq!(
+            0x41,
+            game.cpu[0].get_register_effective_r(RegisterId::Data, game.player, game.player_mask())
+        );
+        assert_eq!(0x0004, game.cpu[0].pc);
+        game.make_move(PlayerMove::Move(MoveDir::Up));
+        assert_eq!(0x0004, game.cpu[0].pc);
+        game.cpu[0].pc = 0x0003;
+        game.make_move(PlayerMove::Move(MoveDir::Up));
+        assert_eq!(PlayerPos::Pos(V2::make(0x04, 0x00)), game.player);
+        game.cpu[0].pc = 0x0005;
+        assert_eq!(0x2, game.player_page);
+        assert_eq!(
+            0x2,
+            game.cpu[0].get_register_effective_r(RegisterId::Page, game.player, game.player_mask())
+        );
+        game.make_move(PlayerMove::RotatePage);
+        assert_eq!(0x42, game.player_page);
+        assert_eq!(
+            0x2,
+            game.cpu[0].get_register_effective_r(RegisterId::Page, game.player, game.player_mask())
+        );
+
+        assert_eq!(0x0005, game.cpu[0].pc); //instruction in inactive page shouldn't be executed
+        game.make_move(PlayerMove::Move(MoveDir::Up));
+        assert_eq!(0x0005, game.cpu[0].pc); // still sleeping
+        game.make_move(PlayerMove::RotatePage);
+        assert_eq!(0x02, game.player_page);
+        assert_eq!(0x0005, game.cpu[0].pc); // no move on page rotation
+
+        game.make_move(PlayerMove::Move(MoveDir::Up));
+        assert_eq!(0x0006, game.cpu[0].pc);
+
+        //TODO: add test for rotate in register/page
     }
 }

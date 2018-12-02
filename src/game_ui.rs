@@ -310,16 +310,19 @@ impl UiWidget for GamePlayUI {
         //TODO:keybindings
         match e {
             Event::Key(Key::Up) | Event::Key(Key::Char('k')) => {
-                self.game.move_player(MoveDir::Up);
+                self.game.make_move(PlayerMove::Move(MoveDir::Up));
             }
             Event::Key(Key::Left) | Event::Key(Key::Char('h')) => {
-                self.game.move_player(MoveDir::Left);
+                self.game.make_move(PlayerMove::Move(MoveDir::Left));
             }
             Event::Key(Key::Down) | Event::Key(Key::Char('j')) => {
-                self.game.move_player(MoveDir::Down);
+                self.game.make_move(PlayerMove::Move(MoveDir::Down));
             }
             Event::Key(Key::Right) | Event::Key(Key::Char('l')) => {
-                self.game.move_player(MoveDir::Right);
+                self.game.make_move(PlayerMove::Move(MoveDir::Right));
+            }
+            Event::Key(Key::Char('a')) => {
+                self.game.make_move(PlayerMove::RotatePage);
             }
             Event::Key(Key::Char('x')) => {
                 self.show_encoding = true;
