@@ -26,6 +26,7 @@ impl PlayerPos {
 #[derive(Serialize, Deserialize, Copy, Clone)]
 enum TriggerKind {
     SetPC(u16),
+    EndOfLevel,
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -178,6 +179,7 @@ pub struct GamePlayState {
     game_rules: GameRules,
     null_page: PageState,
     page_instruction_executed: bool,
+    pub end_of_level: bool,
 }
 
 #[derive(Debug, PartialEq, Eq, Copy, Clone)]
@@ -260,6 +262,7 @@ impl GamePlayState {
             null_page: PageState::new(),
             visited_pages: Bits256::new(),
             page_instruction_executed: false,
+            end_of_level: false,
         }
     }
 
@@ -304,7 +307,7 @@ impl GamePlayState {
     }
 
     pub fn load_tmp() -> std::io::Result<GamePlayState> {
-        GamePlayState::load_from_path(&::resource::get_resource_dir()?.join("levels/ram.txt"))
+        GamePlayState::load_from_path(&::resource::get_resource_dir()?.join("levels/rb"))
     }
 
     pub fn single_from_path(path: &Path) -> std::io::Result<GamePlayState> {
@@ -463,7 +466,6 @@ impl GamePlayState {
     }
 
     pub fn apply_triggers(&mut self) {
-        eprintln!("apply triger: {:?}", self.player);
         if let PlayerPos::Pos(pos) = self.player {
             let effect = if let Some(page) = self.pages.get_mut(&self.player_page) {
                 //TODO: what happens when player is in inactive page
@@ -485,6 +487,9 @@ impl GamePlayState {
                         self.reset_registers();
                     }
                     self.cpu[0].pc = new_pc;
+                }
+                TriggerKind::EndOfLevel => {
+                    self.end_of_level = true;
                 }
             }
         };

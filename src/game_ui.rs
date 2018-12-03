@@ -75,6 +75,7 @@ impl UiWidget for GameUi {
     fn input(&mut self, e: &Event) -> Option<UiEvent> {
         let result = self.current_widget_mut().input(e);
         let main_menu_id = self.main_menu.get_id();
+        let game_id = self.gameplay_ui.get_id();
         match result {
             None => {
                 return None;
@@ -103,7 +104,16 @@ impl UiWidget for GameUi {
                         UiEventType::Canceled => return self.event(UiEventType::Canceled),
                         _ => {}
                     }
+                } else if r.id == game_id {
+                    match r.e {
+                        UiEventType::Ok | UiEventType::Canceled => {
+                            self.state = GameState::MainMenu;
+                            return self.event(UiEventType::None);
+                        }
+                        _ => {}
+                    }
                 }
+
                 return None;
             }
         }
@@ -230,7 +240,7 @@ impl GamePlayUI {
                 write!(
                     ui.raw_out,
                     "Player location: SYSTEM RAM (page:{:02x})",
-                    self.game.cpu[0].get_register(RegisterId::Page).value
+                    self.game.player_page
                 )?;
             }
             PlayerPos::Register(_) => {
@@ -340,6 +350,9 @@ impl UiWidget for GamePlayUI {
             }
             _ => {}
         }
+        if self.game.end_of_level {
+            return self.event(UiEventType::Ok);
+        }
         return self.event(UiEventType::None);
     }
 
@@ -372,7 +385,8 @@ impl UiWidget for GamePlayUI {
         let bottom_top = self.size.pos + V2::make(0, top_size);
         let right_size = 20;
         let data_width = std::cmp::max(self.size.size.x - right_size - 4, 0);
-        let left_width = data_width / 2;
+        let mut left_width = data_width / 2;
+        left_width = std::cmp::max(0, left_width - ((left_width + 1) % 9));
         let middle_width = data_width - left_width;
 
         let binary_size = Rectangle {
