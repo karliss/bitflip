@@ -1,7 +1,7 @@
 use std::fs::File;
-use std::io::{Error, ErrorKind};
-use std::io::BufReader;
 use std::io::prelude::*;
+use std::io::BufReader;
+use std::io::{Error, ErrorKind};
 use std::ops::{Index, IndexMut};
 use std::path::Path;
 

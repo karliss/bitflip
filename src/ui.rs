@@ -5,11 +5,11 @@ use std::num::NonZeroU64;
 use std::thread;
 use std::time::Duration;
 
-use termion::{async_stdin, AsyncReader};
 use termion::event::{Event, Key};
 use termion::input::TermRead;
 use termion::raw::IntoRawMode;
 use termion::screen::*;
+use termion::{async_stdin, AsyncReader};
 
 use vecmath::*;
 

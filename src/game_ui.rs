@@ -990,27 +990,31 @@ impl DataWidget<&GamePlayState> for CpuView {
                 (r0, r1)
             };
 
+            let active = data.player_page
+                == data.cpu[0].get_register_effective_r(
+                    RegisterId::Page,
+                    data.player,
+                    data.player_mask(),
+                );
+
             for row in top..=bottom {
                 let instruction_pc = ::gameplay::joinu8(pc_v.x as u8, row as u8);
                 let instr = data.read_instruction(instruction_pc, data.player_page);
                 ui.goto(space.pos + V2::make(0, row - top))?;
-                write!(
-                    ui.raw_out,
-                    "{}{:04x}{}",
-                    color::Fg(color::Red),
-                    instruction_pc,
-                    color::Fg(color::Reset),
-                )?;
+                if active {
+                    write!(ui.raw_out, "{}", color::Fg(color::Red))?;
+                }
+                write!(ui.raw_out, "{:04x}", instruction_pc,)?;
                 if instruction_pc == pc {
-                    write!(
-                        ui.raw_out,
-                        "{} =>{}",
-                        color::Fg(color::Yellow),
-                        color::Fg(color::Reset),
-                    )?;
+                    if active {
+                        write!(ui.raw_out, "{} =>", color::Fg(color::Yellow),)?;
+                    } else {
+                        write!(ui.raw_out, " ==",)?;
+                    }
                 } else {
                     write!(ui.raw_out, "   ",)?;
                 }
+                write!(ui.raw_out, "{}", color::Fg(color::Reset))?;
                 CpuView::print_instruction(ui, instr)?;
                 rows_used += 1;
             }
