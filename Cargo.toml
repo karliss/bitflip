@@ -9,3 +9,9 @@ termion = "1.5.1"
 serde = "1.0"
 serde_derive = "1.0"
 serde_yaml = "0.8"
+
+
+[dependencies.tgame]
+#path = ""
+git = "https://github.com/karliss/tgame.git"
+features = ["serialize"]

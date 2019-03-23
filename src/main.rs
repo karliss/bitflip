@@ -8,6 +8,7 @@ extern crate clap;
 extern crate serde_derive;
 extern crate serde_yaml;
 extern crate termion;
+extern crate tgame;
 
 use std::fs::File;
 use std::io::prelude::*;
@@ -18,15 +19,13 @@ use clap::{App, Arg, ArgMatches};
 use bytegrid::{ByteGrid, ByteGridDiff};
 use encoding::Encoding;
 use game_ui::*;
-use ui::*;
+use tgame::ui::*;
 
 mod bytegrid;
 mod encoding;
 mod game_ui;
 mod gameplay;
 mod resource;
-mod ui;
-mod vecmath;
 
 fn run_diff(args: &ArgMatches) -> Result<(), ()> {
     let before_name = args.value_of("before").unwrap();

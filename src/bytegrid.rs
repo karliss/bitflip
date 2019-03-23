@@ -6,7 +6,7 @@ use std::ops::{Index, IndexMut};
 use std::path::Path;
 
 use encoding::Encoding;
-use vecmath::V2;
+use tgame::vecmath::V2;
 
 const N: usize = 256;
 

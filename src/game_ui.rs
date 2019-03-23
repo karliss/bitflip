@@ -6,8 +6,8 @@ use termion::event::{Event, Key};
 
 use encoding::Encoding;
 use gameplay::*;
-use ui::*;
-use vecmath::*;
+use tgame::ui::*;
+use tgame::vecmath::*;
 
 enum GameState {
     MainMenu,

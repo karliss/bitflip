@@ -4,7 +4,7 @@ use std::path::Path;
 
 use bytegrid::*;
 use encoding::Encoding;
-use vecmath::*;
+use tgame::vecmath::*;
 
 const GRID_MAX: u8 = 0xff;
 const PLAYER_VAL: u8 = b'@';
