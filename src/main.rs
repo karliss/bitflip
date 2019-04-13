@@ -1,4 +1,3 @@
-#![feature(box_syntax, box_patterns)]
 //TODO: enable dead_code check
 #![allow(dead_code)]
 #[macro_use]
