@@ -18,7 +18,7 @@ impl Encoding {
     }
 
     fn get_encoding_dir() -> Result<PathBuf, std::io::Error> {
-        Ok(::resource::get_resource_dir()?.join("encodings"))
+        Ok(crate::resource::get_resource_dir()?.join("encodings"))
     }
 
     pub fn get_encoding(name: &str) -> Result<Encoding, std::io::Error> {

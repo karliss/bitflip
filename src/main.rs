@@ -1,5 +1,4 @@
 #![feature(box_syntax, box_patterns)]
-#![feature(nll)]
 //TODO: enable dead_code check
 #![allow(dead_code)]
 #[macro_use]
@@ -16,9 +15,9 @@ use std::path::Path;
 
 use clap::{App, Arg, ArgMatches};
 
-use bytegrid::{ByteGrid, ByteGridDiff};
-use encoding::Encoding;
-use game_ui::*;
+use crate::bytegrid::{ByteGrid, ByteGridDiff};
+use crate::encoding::Encoding;
+use crate::game_ui::*;
 use tgame::ui::*;
 
 mod bytegrid;
@@ -112,7 +111,7 @@ fn run_game(_args: &ArgMatches) -> Result<(), ()> {
 fn run_single_level(args: &ArgMatches) -> Result<(), ()> {
     let mut stdout = std::io::stdout();
     {
-        let game_data = ::gameplay::GamePlayState::load_from_path(Path::new(
+        let game_data = crate::gameplay::GamePlayState::load_from_path(Path::new(
             args.value_of(&"path").unwrap().into(),
         ))
         .map_err(|e| {

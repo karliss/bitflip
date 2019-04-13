@@ -4,8 +4,8 @@ use std::io::Write;
 use termion::color;
 use termion::event::{Event, Key};
 
-use encoding::Encoding;
-use gameplay::*;
+use crate::encoding::Encoding;
+use crate::gameplay::*;
 use tgame::ui::*;
 use tgame::vecmath::*;
 
@@ -601,7 +601,7 @@ impl TextView {
         let pc_v = splitu16(data.cpu[0].pc);
         if let Some(instruction_range) = data.instruction_range(data.cpu[0].pc) {
             for row in instruction_range.0..=instruction_range.1 {
-                let instruction_pc = ::gameplay::joinu8(pc_v.x as u8, row as u8);
+                let instruction_pc = crate::gameplay::joinu8(pc_v.x as u8, row as u8);
                 let instr = data.read_instruction(instruction_pc, data.player_page);
                 if let Some(p) = instr.mem_operand() {
                     result.insert(p);
@@ -968,7 +968,7 @@ impl DataWidget<&GamePlayState> for CpuView {
     fn print_data(&mut self, ui: &mut UiContext, data: &GamePlayState) -> std::io::Result<()> {
         let space = self.print_registers(ui, data)?;
         let pc = data.cpu[0].pc;
-        let pc_v = ::gameplay::splitu16(pc);
+        let pc_v = crate::gameplay::splitu16(pc);
         let mut rows_used = 0;
         if let Some(range) = data.instruction_range(pc) {
             let (r0, r1) = (range.0 as i32, range.1 as i32);
@@ -998,7 +998,7 @@ impl DataWidget<&GamePlayState> for CpuView {
                 );
 
             for row in top..=bottom {
-                let instruction_pc = ::gameplay::joinu8(pc_v.x as u8, row as u8);
+                let instruction_pc = crate::gameplay::joinu8(pc_v.x as u8, row as u8);
                 let instr = data.read_instruction(instruction_pc, data.player_page);
                 ui.goto(space.pos + V2::make(0, row - top))?;
                 if active {

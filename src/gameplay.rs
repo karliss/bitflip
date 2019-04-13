@@ -2,8 +2,8 @@ use std::collections::HashMap;
 use std::io::{Error, ErrorKind};
 use std::path::Path;
 
-use bytegrid::*;
-use encoding::Encoding;
+use crate::bytegrid::*;
+use crate::encoding::Encoding;
 use tgame::vecmath::*;
 
 const GRID_MAX: u8 = 0xff;
@@ -307,11 +307,11 @@ impl GamePlayState {
     }
 
     pub fn load_tmp() -> std::io::Result<GamePlayState> {
-        GamePlayState::load_from_path(&::resource::get_resource_dir()?.join("levels/rb"))
+        GamePlayState::load_from_path(&crate::resource::get_resource_dir()?.join("levels/rb"))
     }
 
     pub fn single_from_path(path: &Path) -> std::io::Result<GamePlayState> {
-        let encoding = ::encoding::Encoding::get_encoding("437")?;
+        let encoding = crate::encoding::Encoding::get_encoding("437")?;
         let grid = ByteGrid::load(path, &encoding)?;
         Ok(GamePlayState::from_grid(grid))
     }
@@ -404,8 +404,8 @@ impl GamePlayState {
         if let Some(page_id) = level_config.initial_page {
             game_state.set_initial_page(page_id);
         } else if game_state.pages.len() == 1 {
-            if let Some(id) = game_state.pages.keys().next() {
-                game_state.set_initial_page(*id);
+            if let Some(id) = game_state.pages.keys().next().cloned() {
+                game_state.set_initial_page(id);
             } else {
                 game_state.set_initial_page(DEFAULT_PAGE);
             }
