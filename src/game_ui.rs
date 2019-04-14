@@ -89,10 +89,14 @@ impl UiWidget for GameUi {
                                     0 => {
                                         self.state = GameState::Gameplay;
                                         let game_state = GamePlayState::load_tmp();
-                                        if let Ok(gs) = game_state {
-                                            self.gameplay_ui.set_state(gs);
-                                        } else {
-                                            return self.event(UiEventType::Canceled);
+                                        match game_state {
+                                            Ok(gs) => {
+                                                self.gameplay_ui.set_state(gs);
+                                            }
+                                            Err(e) => {
+                                                eprintln!("Failed to load level {:?}", e);
+                                                return self.event(UiEventType::Canceled);
+                                            }
                                         }
                                         return self.event(UiEventType::None);
                                     }

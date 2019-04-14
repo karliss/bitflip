@@ -4,9 +4,6 @@
 extern crate clap;
 #[macro_use]
 extern crate serde_derive;
-extern crate serde_yaml;
-extern crate termion;
-extern crate tgame;
 
 use std::fs::File;
 use std::io::prelude::*;
@@ -24,6 +21,7 @@ mod encoding;
 mod game_ui;
 mod gameplay;
 mod resource;
+mod serde_rbbin;
 
 fn run_diff(args: &ArgMatches) -> Result<(), ()> {
     let before_name = args.value_of("before").unwrap();
@@ -92,9 +90,14 @@ fn run_patch(args: &ArgMatches) -> Result<(), ()> {
 fn run_game(_args: &ArgMatches) -> Result<(), ()> {
     let mut stdout = std::io::stdout();
     {
-        let mut context = UiContext::create(&stdout).ok_or(())?;
+        let mut context = UiContext::create(&stdout).ok_or_else(|| {
+            eprintln!("failed to initialize terminal");
+        })?;
         let mut menu = GameUi::new(&mut context);
-        context.run(&mut menu).map_err(|_| ())?;
+        context.run(&mut menu).map_err(|e| {
+            eprintln!("Error {:?}", e);
+            ()
+        })?;
     }
 
     write!(
@@ -133,6 +136,30 @@ fn run_single_level(args: &ArgMatches) -> Result<(), ()> {
     Ok(())
 }
 
+fn dump_rbsave(args: &ArgMatches) -> Result<(), ()> {
+    let path_str = args.value_of("path").unwrap();
+    let path = Path::new(path_str);
+    if !path.is_file() {
+        eprintln!("File {} does not exist", path_str);
+        return Err(());
+    }
+    let handle_io_error = |e| {
+        eprintln!("{}", e);
+    };
+    let mut f = File::open(path).map_err(handle_io_error)?;
+    let mut buffer = Vec::new();
+    f.read_to_end(&mut buffer).map_err(handle_io_error)?;
+    let v: serde_json::Value =
+        serde_rbbin::from_bytes(&buffer).map_err(|e| eprintln!("Failed to parse file {}", e))?;
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&v).map_err(|e| {
+            eprintln!("Json printing error {:?}", e);
+        })?
+    );
+    Ok(())
+}
+
 fn main() {
     let matches = App::new("ethdec")
         .version(crate_version!())
@@ -158,12 +185,18 @@ fn main() {
                 .about("Play single level")
                 .arg(Arg::with_name("path")),
         )
+        .subcommand(
+            clap::SubCommand::with_name("dump_rbsave")
+                .about("Read RB save file and print it as text")
+                .arg(Arg::with_name("path")),
+        )
         .get_matches();
 
     let result = match matches.subcommand() {
         ("diff", Some(m)) => run_diff(m),
         ("patch", Some(m)) => run_patch(m),
         ("play", Some(m)) => run_single_level(m),
+        ("dump_rbsave", Some(m)) => dump_rbsave(m),
         _ => run_game(&matches),
     };
     ::std::process::exit(match result {

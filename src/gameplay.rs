@@ -342,6 +342,12 @@ impl GamePlayState {
             }
             return Ok(LevelFormat::SingleGrid);
         }
+        if !path.exists() {
+            return Err(::std::io::Error::new(
+                ::std::io::ErrorKind::NotFound,
+                format!("Does not exist {:?}", path),
+            ));
+        }
         return Err(::std::io::Error::new(
             ::std::io::ErrorKind::InvalidData,
             "Unrecognized level format",
