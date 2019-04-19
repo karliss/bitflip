@@ -1,9 +1,11 @@
 use std::collections::HashMap;
+use std::io::prelude::*;
 use std::io::{Error, ErrorKind};
 use std::path::Path;
 
 use crate::bytegrid::*;
 use crate::encoding::Encoding;
+use crate::serde_rbbin::RBSave;
 use tgame::vecmath::*;
 
 const GRID_MAX: u8 = 0xff;
@@ -23,10 +25,11 @@ impl PlayerPos {
     }
 }
 
-#[derive(Serialize, Deserialize, Copy, Clone)]
+#[derive(Serialize, Deserialize, Clone)]
 enum TriggerKind {
     SetPC(u16),
     EndOfLevel,
+    Message(String),
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -336,7 +339,7 @@ impl GamePlayState {
         }
         if path.is_file() {
             if let Some(ext) = path.extension() {
-                if ext == ".storage" {
+                if ext == "storage" {
                     return Ok(LevelFormat::RBStorage);
                 }
             }
@@ -348,6 +351,7 @@ impl GamePlayState {
                 format!("Does not exist {:?}", path),
             ));
         }
+        eprintln!("Unrecognized file format.");
         return Err(::std::io::Error::new(
             ::std::io::ErrorKind::InvalidData,
             "Unrecognized level format",
@@ -435,15 +439,85 @@ impl GamePlayState {
         Ok(game_state)
     }
 
+    pub fn load_from_rbstorage(path: &Path) -> std::io::Result<GamePlayState> {
+        eprintln!("Loading .storage file");
+        if !path.is_file() {
+            eprintln!("File {} does not exist", path.to_string_lossy());
+            return Err(std::io::Error::new(
+                ErrorKind::NotFound,
+                "Level file not found",
+            ));
+        }
+        let handle_io_error = |e| {
+            eprintln!("{}", e);
+            e
+        };
+        let mut f = std::fs::File::open(path).map_err(handle_io_error)?;
+        let mut buffer = Vec::new();
+        f.read_to_end(&mut buffer).map_err(handle_io_error)?;
+        let rb_save: RBSave = crate::serde_rbbin::from_bytes(&buffer).map_err(|e| {
+            eprintln!("Failed to parse file {}", e);
+            std::io::Error::new(ErrorKind::InvalidData, "Failed to parse RB save")
+        })?;
+        let mut game_state = GamePlayState::new();
+
+        let swap_bytes = |v: u16| (v >> 8) | (v << 8);
+
+        let page_from_map = |map: std::collections::HashMap<u16, u8>| {
+            let mut byte_grid = ByteGrid::new();
+            for (key, value) in map {
+                byte_grid[swap_bytes(key)] = value;
+            }
+            PageState::from_grid_raw(byte_grid)
+        };
+        game_state.pages.insert(2, page_from_map(rb_save.realm2));
+        game_state.pages.insert(66, page_from_map(rb_save.realm42));
+
+        for (id, page) in &mut game_state.pages {
+            for trigger in &rb_save.jumps {
+                if trigger.realm != *id {
+                    continue;
+                }
+                let effect = if trigger.code != 0 {
+                    TriggerKind::SetPC(trigger.code)
+                } else {
+                    TriggerKind::Message(trigger.achievement.clone())
+                };
+                page.triggers.insert(
+                    joinu8(trigger.x, trigger.y),
+                    Trigger {
+                        pos: V2::make(trigger.x as i32, trigger.y as i32),
+                        effect,
+                        one_time: true,
+                        triggered: false,
+                    },
+                );
+            }
+        }
+
+        game_state.set_initial_page(rb_save.page_register);
+
+        game_state.player =
+            PlayerPos::Pos(V2::make(rb_save.player_x as i32, rb_save.player_y as i32));
+        {
+            let cpu = &mut game_state.cpu[0];
+            cpu.set_register(RegisterId::Compare, rb_save.compare_register);
+            cpu.set_register(RegisterId::Page, rb_save.page_register);
+            cpu.set_register(RegisterId::Data, rb_save.data_register);
+
+            cpu.pc = swap_bytes(rb_save.program_location) + rb_save.program_line * 0x100;
+        }
+
+        Ok(game_state)
+    }
+
     pub fn load_from_path(path: &Path) -> std::io::Result<GamePlayState> {
         let level_format = GamePlayState::detect_level_format(path)?;
 
         match level_format {
             LevelFormat::SingleGrid => GamePlayState::single_from_path(path),
             LevelFormat::Folder => GamePlayState::load_from_folder(path),
-            LevelFormat::RBStorage => {
-                unimplemented!();
-            }
+            LevelFormat::RBStorage => GamePlayState::load_from_rbstorage(path),
         }
     }
 
@@ -480,7 +554,7 @@ impl GamePlayState {
                         return;
                     }
                     trigger.triggered = true;
-                    trigger.effect
+                    trigger.effect.clone()
                 } else {
                     return;
                 }
@@ -496,6 +570,12 @@ impl GamePlayState {
                 }
                 TriggerKind::EndOfLevel => {
                     self.end_of_level = true;
+                }
+                TriggerKind::Message(m) => {
+                    eprintln!("{}", m);
+                    if m == "WIN" {
+                        self.end_of_level = true;
+                    }
                 }
             }
         };

@@ -117,7 +117,7 @@ fn run_single_level(args: &ArgMatches) -> Result<(), ()> {
             args.value_of(&"path").unwrap().into(),
         ))
         .map_err(|e| {
-            eprintln!("{:?}", e);
+            eprintln!("{} ", e);
         })?; //TODO: error handling
         let mut context = UiContext::create(&stdout).ok_or(())?;
 

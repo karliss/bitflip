@@ -270,6 +270,13 @@ impl GamePlayUI {
                 write!(ui.raw_out, "Player position: Register")?;
             }
         }
+        write!(
+            ui.raw_out,
+            "{}\r\n{}\r\n{}",
+            termion::clear::UntilNewline,
+            termion::clear::UntilNewline,
+            termion::clear::UntilNewline
+        )?;
         Ok(())
     }
 

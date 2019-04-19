@@ -289,9 +289,6 @@ impl<'de, 'a> de::Deserializer<'de> for &'a mut Deserializer<'de> {
         self.deserialize_unit(visitor)
     }
 
-    // As is done here, serializers are encouraged to treat newtype structs as
-    // insignificant wrappers around the data they contain. That means not
-    // parsing anything other than the contained value.
     fn deserialize_newtype_struct<V>(self, _name: &'static str, visitor: V) -> Result<V::Value>
     where
         V: Visitor<'de>,
@@ -335,7 +332,6 @@ impl<'de, 'a> de::Deserializer<'de> for &'a mut Deserializer<'de> {
         self.deserialize_seq(visitor)
     }
 
-    // Tuple structs look just like sequences in JSON.
     fn deserialize_tuple_struct<V>(
         self,
         _name: &'static str,
@@ -348,9 +344,6 @@ impl<'de, 'a> de::Deserializer<'de> for &'a mut Deserializer<'de> {
         self.deserialize_seq(visitor)
     }
 
-    // Much like `deserialize_seq` but calls the visitors `visit_map` method
-    // with a `MapAccess` implementation, rather than the visitor's `visit_seq`
-    // method with a `SeqAccess` implementation.
     fn deserialize_map<V>(mut self, visitor: V) -> Result<V::Value>
     where
         V: Visitor<'de>,
@@ -358,12 +351,6 @@ impl<'de, 'a> de::Deserializer<'de> for &'a mut Deserializer<'de> {
         visitor.visit_map(MapReader::new(&mut self))
     }
 
-    // Structs look just like maps in JSON.
-    //
-    // Notice the `fields` parameter - a "struct" in the Serde data model means
-    // that the `Deserialize` implementation is required to know what the fields
-    // are before even looking at the input data. Any key-value pairing in which
-    // the fields cannot be known ahead of time is probably a map.
     fn deserialize_struct<V>(
         self,
         _name: &'static str,
@@ -395,17 +382,6 @@ impl<'de, 'a> de::Deserializer<'de> for &'a mut Deserializer<'de> {
         self.deserialize_str(visitor)
     }
 
-    // Like `deserialize_any` but indicates to the `Deserializer` that it makes
-    // no difference which `Visitor` method is called because the data is
-    // ignored.
-    //
-    // Some deserializers are able to implement this more efficiently than
-    // `deserialize_any`, for example by rapidly skipping over matched
-    // delimiters without paying close attention to the data in between.
-    //
-    // Some formats are not able to implement this at all. Formats that can
-    // implement `deserialize_any` and `deserialize_ignored_any` are known as
-    // self-describing.
     fn deserialize_ignored_any<V>(self, visitor: V) -> Result<V::Value>
     where
         V: Visitor<'de>,
@@ -481,6 +457,35 @@ impl<'de, 'a> SeqAccess<'de> for ListReader<'a, 'de> {
         self.de.state = DeserializerState::Typed;
         seed.deserialize(&mut *self.de).map(Some)
     }
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct RBJump {
+    #[serde(default)]
+    pub achievement: String,
+    pub code: u16,
+    pub realm: u8,
+    pub x: u8,
+    pub y: u8,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RBSave {
+    pub allow_page_instruction: u8,
+    pub camera_bottom: i32,
+    pub compare_register: u8,
+    pub data_register: u8,
+    pub page_register: u8,
+    pub jumps: Vec<RBJump>,
+    pub player_location: i32,
+    pub player_page: u8,
+    pub player_x: u8,
+    pub player_y: u8,
+    pub program_line: u16,
+    pub program_location: u16,
+    pub realm2: std::collections::HashMap<u16, u8>,
+    pub realm42: std::collections::HashMap<u16, u8>,
 }
 
 ////////////////////////////////////////////////////////////////////////////////
