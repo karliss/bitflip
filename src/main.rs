@@ -94,11 +94,12 @@ fn run_game(_args: &ArgMatches) -> Result<(), ()> {
             eprintln!("failed to initialize terminal");
         })?;
         let mut menu = GameUi::new(&mut context);
-        context.run(&mut menu).map_err(|e| {
-            eprintln!("Error {:?}", e);
-            ()
-        })?;
+        context.run(&mut menu)
     }
+    .map_err(|e| {
+        eprintln!("Error {:?}", e);
+        ()
+    })?;
 
     write!(
         stdout,

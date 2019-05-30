@@ -94,7 +94,11 @@ impl UiWidget for GameUi {
                                                 self.gameplay_ui.set_state(gs);
                                             }
                                             Err(e) => {
-                                                eprintln!("Failed to load level {:?}", e);
+                                                eprintln!(
+                                                    "{}Failed to load level {:?}",
+                                                    termion::screen::ToMainScreen,
+                                                    e
+                                                );
                                                 return self.event(UiEventType::Canceled);
                                             }
                                         }
