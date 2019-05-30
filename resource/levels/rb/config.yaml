@@ -1,0 +1,22 @@
+initial_pos: { x: 6, y: 13}
+page_descr:
+    -
+        id: 0x42
+        file_name: ram.txt
+        extra_triggers:
+            - {pos: {x: 0xb1, y: 0x4b}, effect: {SetPC: 0xc758}}
+            - {pos: {x: 0xbd, y: 0x57}, effect: {SetPC: 0xb651}}
+            - {pos: {x: 0x9a, y: 0x58}, effect: {SetPC: 0x6452}}
+            - {pos: {x: 0x59, y: 0x5c}, effect: {SetPC: 0x4e4e}}
+            - {pos: {x: 0x28, y: 0x59}, effect: {SetPC: 0x214f}}
+            - {pos: {x: 0x77, y: 0x7b}, effect: {SetPC: 0x8860}}
+            - {pos: {x: 0xfa, y: 0x7d}, effect: {SetPC: 0xdc7c}}
+            - {pos: {x: 0x99, y: 0xaf}, effect: {SetPC: 0xcba7}}
+            - {pos: {x: 0x80, y: 0xce}, effect: {SetPC: 0x77c1}}
+            - {pos: {x: 0x51, y: 0xf4}, effect: {SetPC: 0x5be0}}
+            - {pos: {x: 0xf8, y: 0xc1}, effect: {SetPC: 0xf0c4}}
+            - {pos: {x: 0xf7, y: 0xf0}, effect: EndOfLevel}
+            - {pos: {x: 0xb0, y: 0xf3}, effect: EndOfLevel}
+    -
+        id: 0x02
+        file_name: ram2.txt
