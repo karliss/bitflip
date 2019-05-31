@@ -301,6 +301,10 @@ impl<'de, 'a> de::Deserializer<'de> for &'a mut Deserializer<'de> {
         V: Visitor<'de>,
     {
         let v = self.next_byte()?;
+        if v == b'c' {
+            // empty list
+            return visitor.visit_seq(ListReader::new(&mut self, 0 as usize));
+        }
         if v != 3 {
             return Err(Error::Message(format!(
                 "Expected list at {} got {}",
@@ -568,13 +572,21 @@ mod tests {
         assert_eq!(Ok(TestStructI32 { a: 54 }), from_bytes(&data));
     }
 
+    #[derive(Deserialize, PartialEq, Debug)]
+    struct TestArrayStruct {
+        a: Vec<i32>,
+    }
     #[test]
     fn test_array() {
-        // two empty lists
+        // empty list
+        let data = [2u8, 1, 0, 0, 0, b'a', b'c', b'c'];
+        assert_eq!(Ok(TestArrayStruct { a: vec![] }), from_bytes(&data));
+
+        // two empty dictionaries
         let data = [2u8, 1, 0, 0, 0, b'a', 3, 2, 0, 0, 0, b'c', b'c', b'c', b'c'];
         assert_eq!(Ok(json!({"a": [{}, {}]})), from_bytes(&data));
 
-        // non empty lists
+        // non empty dictionaries
         let data = [
             2u8, 1, 0, 0, 0, b'a', 3, 2, 0, 0, 0, 1, 1, 0, 0, 0, b'a', 0, 0, 0, 0, b'c', 1, 1, 0,
             0, 0, b'a', 0, 0, 0, 0, b'c', b'c', b'c',
